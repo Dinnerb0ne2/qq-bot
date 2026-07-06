@@ -1,0 +1,18 @@
+# Run qq-bot with Docker Compose:
+#   docker compose up -d            # pull ghcr.io/isomoes/qq-bot:latest and start
+#   docker compose up -d --build    # build from this checkout instead of pulling
+#
+# Credentials are read from a local .env file (copy .env.example -> .env and fill
+# in BOT_APPID / BOT_SECRET). The bot is an outbound WebSocket client, so it
+# exposes no port and stores no data — no ports or volumes are mapped.
+services:
+  qq-bot:
+    image: ghcr.io/isomoes/qq-bot:latest
+    build: .
+    container_name: qq-bot
+    env_file:
+      - .env
+    # A real init as PID 1: clean SIGTERM shutdown + zombie reaping for the
+    # long-running bot process.
+    init: true
+    restart: unless-stopped

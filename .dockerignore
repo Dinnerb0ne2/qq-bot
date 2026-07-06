@@ -1,0 +1,29 @@
+# Keep the build context (and resulting image) lean — only what `pnpm build`
+# needs reaches the daemon. node_modules and dist are rebuilt inside the image.
+node_modules
+dist
+*.tsbuildinfo
+.git
+.gitignore
+.github
+.vscode
+.idea
+
+# Secrets never belong in the build context.
+.env
+.env.local
+.env.*.local
+
+# Docs / meta not needed to build.
+*.md
+LICENSE
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Logs / caches / editor cruft.
+logs
+*.log
+.cache
+tmp
+.DS_Store

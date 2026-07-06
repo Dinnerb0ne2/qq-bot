@@ -1,0 +1,164 @@
+# Release pipeline — everything is driven by pushing a `vX.Y.Z` git tag.
+#
+# qq-bot is a deployable service (package.json is "private": true — nothing is
+# published to npm), so the Docker image IS the release artifact. Three jobs run
+# in sequence, chained by `needs:` so each is gated on the previous succeeding:
+#
+#   typecheck ──▶ docker ──▶ release
+#
+#   1. typecheck : never build/release a tree that doesn't compile.
+#   2. docker    : build a multi-arch (amd64 + arm64) image and push it to
+#                  ghcr.io/isomoes/qq-bot.
+#   3. release   : cut the GitHub Release from CHANGELOG.md.
+#
+# This mirrors the reference project's intent — "never cut a Release for a
+# version whose artifact failed to publish" — but as a single tag-triggered
+# workflow rather than the `workflow_run` fan-out that project uses. qq-bot has
+# only one downstream (the Release), so `needs:` is simpler and avoids the
+# `workflow_run` default-branch caveat.
+#
+# No secrets are needed: both ghcr push and the Release use the built-in
+# GITHUB_TOKEN. Make the ghcr package public once (repo → Packages settings) if
+# you want anonymous `docker pull`.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write # create GitHub Releases
+  packages: write # push to ghcr.io
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Gate: the only correctness check (there is no test suite or linter). tsc also
+  # runs inside the Docker build, but failing here is faster and clearer.
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # No `version:` input on purpose: package.json pins the pnpm version via
+      # its `packageManager` field (pnpm@11.3.0) and action-setup@v4 reads it.
+      # Passing `version:` as well makes the action abort with "Multiple versions
+      # of pnpm specified" — it errors when BOTH are present, even if they agree.
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+  docker:
+    needs: typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # vX.Y.Z -> tags: X.Y.Z, X.Y, latest (docker/metadata-action adds `latest`
+      # only for the highest non-prerelease semver, so v1.0.0-rc1 skips it). The
+      # tag is github.ref, so semver reads from it directly.
+      - name: Derive image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Skip the provenance/SBOM attestation manifests so the package's
+          # architecture list stays clean (amd64 + arm64, no "unknown/unknown").
+          provenance: false
+          sbom: false
+
+  release:
+    needs: docker
+    runs-on: ubuntu-latest
+    steps:
+      # The workflow runs on the tag, so a plain checkout gets the tagged commit
+      # (and its CHANGELOG.md).
+      - uses: actions/checkout@v4
+
+      # Pull the block under `## <version>` (up to the next `## `) out of the
+      # changelog. Falls back to GitHub's auto-generated notes if the section —
+      # or the CHANGELOG.md file itself — is absent.
+      - name: Extract changelog notes
+        id: notes
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          VERSION="${TAG#v}"
+          NOTES="$RUNNER_TEMP/notes.md"
+          : > "$NOTES"
+          if [ -f CHANGELOG.md ]; then
+            awk -v hdr="## ${VERSION}" '
+              $0 == hdr { found = 1; next }
+              found && /^## / { exit }
+              found { print }
+            ' CHANGELOG.md > "$NOTES"
+            sed -i -e '/./,$!d' "$NOTES" # strip leading blank lines
+          fi
+          if grep -q '[^[:space:]]' "$NOTES"; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::No '## ${VERSION}' section in CHANGELOG.md — using auto-generated notes."
+          fi
+          echo "file=$NOTES" >> "$GITHUB_OUTPUT"
+
+      # Idempotent: if the workflow is re-run for a tag that already has a
+      # Release, refresh its notes instead of failing on "release already exists".
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          FOUND: ${{ steps.notes.outputs.found }}
+          FILE: ${{ steps.notes.outputs.file }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists — updating."
+            if [ "$FOUND" = "true" ]; then
+              gh release edit "$TAG" --title "$TAG" --notes-file "$FILE"
+            fi
+          elif [ "$FOUND" = "true" ]; then
+            gh release create "$TAG" --title "$TAG" --notes-file "$FILE" --verify-tag
+          else
+            gh release create "$TAG" --title "$TAG" --generate-notes --verify-tag
+          fi
