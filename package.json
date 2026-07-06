@@ -1,0 +1,28 @@
+{
+  "name": "qq-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "QQ group management bot built on the qq-official-bot SDK",
+  "license": "MIT",
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "engines": {
+    "node": ">=20.12"
+  },
+  "packageManager": "pnpm@11.3.0",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "qq-official-bot": "^1.2.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.9.2"
+  }
+}
