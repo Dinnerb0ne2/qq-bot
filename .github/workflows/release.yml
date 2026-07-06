@@ -7,7 +7,7 @@
 #   typecheck ──▶ docker ──▶ release
 #
 #   1. typecheck : never build/release a tree that doesn't compile.
-#   2. docker    : build a multi-arch (amd64 + arm64) image and push it to
+#   2. docker    : build a linux/amd64 image and push it to
 #                  ghcr.io/isomoes/qq-bot.
 #   3. release   : cut the GitHub Release from CHANGELOG.md.
 #
@@ -68,9 +68,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
+      # No QEMU: ubuntu-latest is an amd64 runner and we build linux/amd64 only,
+      # so the build is native — QEMU is only needed to emulate a foreign arch
+      # (it was here for the arm64 image, now dropped). Buildx stays: it's the
+      # builder docker/build-push-action runs through and backs the gha cache.
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -97,14 +98,15 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           # Skip the provenance/SBOM attestation manifests so the package's
-          # architecture list stays clean (amd64 + arm64, no "unknown/unknown").
+          # architecture list stays clean (a single amd64 entry, no
+          # "unknown/unknown").
           provenance: false
           sbom: false
 

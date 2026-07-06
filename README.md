@@ -67,8 +67,8 @@ pnpm start
 
 ## Run with Docker
 
-Prebuilt multi-arch images (amd64 + arm64) are published to the GitHub Container
-Registry, so no Node.js on the host is required:
+Prebuilt `linux/amd64` images are published to the GitHub Container Registry, so
+no Node.js on the host is required:
 
 ```sh
 docker run -d --name qq-bot --init --restart unless-stopped --env-file .env \
@@ -152,7 +152,7 @@ in sequence, each gated on the previous:
 
 1. **typecheck** — `tsc --noEmit`; never build or release a tree that doesn't
    compile.
-2. **docker** — build a multi-arch (amd64 + arm64) image and push it to
+2. **docker** — build a `linux/amd64` image and push it to
    `ghcr.io/isomoes/qq-bot`, tagged `X.Y.Z`, `X.Y`, and `latest` (a `-rc`/`-beta`
    prerelease tag skips `latest`).
 3. **release** — cut the GitHub Release for the tag, using the matching
