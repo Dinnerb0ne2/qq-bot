@@ -1,5 +1,6 @@
 import type { Bot, GroupMessageEvent, PrivateMessageEvent } from 'qq-official-bot'
-import { AntiAd } from './anti-ad'
+import { config } from './config'
+import { AntiAd, startAdRulesRefresh } from './ad'
 
 /**
  * Register all message event handlers.
@@ -7,6 +8,15 @@ import { AntiAd } from './anti-ad'
  */
 export function registerHandlers(bot: Bot): void {
   const antiAd = new AntiAd(bot)
+
+  // Optionally augment the built-in ad keywords & patterns from a remote file.
+  if (config.adRulesUrl) {
+    startAdRulesRefresh({
+      url: config.adRulesUrl,
+      intervalMs: config.adRulesRefreshMinutes * 60_000,
+      logger: bot.logger,
+    })
+  }
 
   bot.on('message.group', (e) => {
     handleGroupMessage(bot, antiAd, e).catch((err) => bot.logger.error('Failed to handle group message:', err))

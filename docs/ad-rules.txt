@@ -1,0 +1,149 @@
+# Ad rules for qq-bot — a single file with two sections, unioned with the
+# built-in lists in src/ad/. Edit and push to update a live bot (no redeploy);
+# a failed fetch keeps the built-in lists in effect. Lines starting with "#" are
+# comments; blank lines are ignored.
+#
+# [keywords]  one term per line. A message is flagged once it hits at least
+#             AD_MIN_KEYWORD_HITS distinct keywords (built-in + these).
+# [patterns]  one regex per line — a bare source, or the /source/flags form.
+#             A single match flags a message. Patterns are validated at load:
+#             invalid, over-long, or catastrophically-slow ones are skipped and
+#             the stateful g/y flags are dropped.
+#             WARNING: patterns run on every message with no timeout. Avoid
+#             nested quantifiers like (a+)+ which can hang the bot (ReDoS).
+#
+# Keyword seed derived from konsheng/Sensitive-lexicon (MIT License),
+# https://github.com/konsheng/Sensitive-lexicon — Copyright (c) konsheng.
+
+[keywords]
+兼职
+招聘
+网络
+QQ
+有意者
+到货
+本店
+代购
+扣扣
+客服
+微店
+兼值
+淘宝
+小姐
+妓女
+包夜
+3P
+LY
+JS
+狼友
+技师
+推油
+胸推
+BT
+毒龙
+口爆
+楼凤
+足交
+口暴
+口交
+全套
+SM
+桑拿
+吞精
+咪咪
+婊子
+乳方
+操逼
+全职
+性伴侣
+网购
+网络工作
+代理
+专业代理
+帮忙点一下
+帮忙点下
+请点击进入
+详情请进入
+私人侦探
+私家侦探
+针孔摄象
+调查婚外情
+信用卡提现
+无抵押贷款
+广告代理
+原音铃声
+借腹生子
+找个妈妈
+找个爸爸
+代孕妈妈
+代生孩子
+代开发票
+腾讯客服电话
+销售热线
+免费订购热线
+低价出售
+款到发货
+回复可见
+连锁加盟
+加盟连锁
+免费二级域名
+免费使用
+免费索取
+蚁力神
+婴儿汤
+售肾
+刻章办
+买小车
+套牌车
+玛雅网
+电脑传讯
+视频来源
+下载速度
+高清在线
+全集在线
+在线播放
+txt下载
+六位qq
+6位qq
+位的qq
+个qb
+送qb
+用刀横向切腹
+完全自杀手册
+四海帮
+足球投注
+地下钱庄
+中国复兴党
+阿波罗网
+曾道人
+六合彩
+改卷内幕
+替考试
+隐形耳机
+出售答案
+考中答案
+答an
+da案
+资金周转
+救市
+股市圈钱
+崩盘
+资金短缺
+证监会
+质押贷款
+小额贷款
+周小川
+刘明康
+尚福林
+孔丹
+云服务器
+轻量服务器
+低价秒杀
+续费原价
+建站
+
+[patterns]
+# Examples — uncomment or add your own (built-ins already cover many genres):
+# 拉[你您]进[群裙]
+# 一手.{0,6}(货源|批发|代理)
+# /加\s*薇\s*[:：]?\s*[a-z0-9_-]{4,20}/i

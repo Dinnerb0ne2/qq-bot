@@ -1,6 +1,6 @@
 import type { Bot, GroupMessageEvent } from 'qq-official-bot'
-import { config } from './config'
-import { detectAd } from './ad-detector'
+import { config } from '../config'
+import { detectAd } from './detector'
 
 /**
  * Ad moderation for group messages.
