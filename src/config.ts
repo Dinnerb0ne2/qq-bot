@@ -1,5 +1,7 @@
-import 'dotenv/config'
+import { config as loadEnvFile } from 'dotenv'
 import type { LogLevel } from 'qq-official-bot'
+
+loadEnvFile()
 
 function required(name: string): string {
   const value = process.env[name]
