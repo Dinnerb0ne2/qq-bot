@@ -23,6 +23,9 @@ yarn-error.log*
 .cache/
 tmp/
 
+# News command SQLite database (and WAL/SHM sidecars)
+data/
+
 # Editor / OS
 .vscode/*
 !.vscode/settings.json

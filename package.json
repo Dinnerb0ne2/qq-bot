@@ -7,21 +7,23 @@
   "type": "commonjs",
   "main": "dist/index.js",
   "engines": {
-    "node": ">=20.12"
+    "node": ">=22.13"
   },
   "packageManager": "pnpm@11.3.0",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "NEWS_MANUAL_REFRESH=true tsx watch --disable-warning=ExperimentalWarning src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js",
+    "start": "node --disable-warning=ExperimentalWarning dist/index.js",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.110.0",
     "dotenv": "^16.4.7",
-    "qq-official-bot": "^1.2.3"
+    "qq-official-bot": "^1.2.3",
+    "rss-parser": "^3.13.0"
   },
   "devDependencies": {
-    "@types/node": "^20.11.5",
+    "@types/node": "^22.20.0",
     "tsx": "^4.19.2",
     "typescript": "^5.9.2"
   }
