@@ -129,7 +129,7 @@ leaves only the tag — no image on ghcr and no GitHub Release
 - **Changelog section naming is exact.** The `release` job greps for a literal `## X.Y.Z`
   heading (the `v` stripped from the tag). A mismatch silently falls back to auto-generated
   notes — verify the heading matches the tag.
-- **Image contents.** The multi-stage `Dockerfile` ships only Node, the two runtime deps
+- **Image contents.** The multi-stage `docker/Dockerfile` ships only Node, the two runtime deps
   (`dotenv`, `qq-official-bot`), and compiled `dist/` — the TypeScript toolchain stays in the
   builder. The build runs `pnpm build` (`tsc`), so the image also fails on type errors; CI
   gates explicitly first for a faster, clearer signal.

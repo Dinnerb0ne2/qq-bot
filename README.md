@@ -85,14 +85,16 @@ The image must be **public**, or the host must `docker login ghcr.io` first —
 otherwise the pull fails with `unauthorized`. Make it public once under the
 repository's Packages settings.
 
-A `docker-compose.yml` is included for the same thing (it reads `.env`):
+A `docker/docker-compose.yml` is included for the same thing (it reads `.env`).
+Run it from the repo root with an explicit `-f`:
 
 ```sh
-docker compose up -d
+docker compose -f docker/docker-compose.yml up -d
 ```
 
 Build the image from the checkout instead of pulling it with
-`docker compose up -d --build`, or `docker build -t qq-bot .`.
+`docker compose -f docker/docker-compose.yml up -d --build`, or
+`docker build -f docker/Dockerfile -t qq-bot .`.
 
 ## Project structure
 

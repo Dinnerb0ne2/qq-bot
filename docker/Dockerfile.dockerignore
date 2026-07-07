@@ -1,3 +1,7 @@
+# Ignore-file for docker/Dockerfile (BuildKit picks up <dockerfile>.dockerignore
+# next to the Dockerfile). Patterns are relative to the build context, which is
+# the repo root — NOT this docker/ folder.
+#
 # Keep the build context (and resulting image) lean — only what `pnpm build`
 # needs reaches the daemon. node_modules and dist are rebuilt inside the image.
 node_modules
@@ -17,9 +21,9 @@ dist
 # Docs / meta not needed to build.
 *.md
 LICENSE
-Dockerfile
-docker-compose.yml
-.dockerignore
+# Docker assets (Dockerfile, compose, this ignore-file) live here, none needed
+# in the build context.
+docker
 
 # Logs / caches / editor cruft.
 logs
@@ -27,3 +31,6 @@ logs
 .cache
 tmp
 .DS_Store
+
+# Local news database — runtime state, never baked into the image.
+data

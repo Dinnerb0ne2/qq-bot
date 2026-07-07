@@ -1,0 +1,28 @@
+# Run qq-bot with Docker Compose. This file lives in docker/, so run it from the
+# repo root with an explicit -f (relative paths below resolve against docker/,
+# hence the ../ prefixes that point back at the repo root):
+#   docker compose -f docker/docker-compose.yml up -d          # pull ghcr.io/isomoes/qq-bot:latest and start
+#   docker compose -f docker/docker-compose.yml up -d --build  # build from this checkout instead of pulling
+#
+# Credentials are read from the repo-root .env file (copy .env.example -> .env
+# and fill in BOT_APPID / BOT_SECRET). The bot is an outbound WebSocket client,
+# so it exposes no port. The `news` command stores fetched RSS items in a SQLite
+# file under /app/data, kept on the ../data bind mount (repo-root ./data) below.
+services:
+  qq-bot:
+    image: ghcr.io/isomoes/qq-bot:latest
+    # Build context is the repo root (one level up), with the Dockerfile in this
+    # docker/ folder. Its .dockerignore is docker/Dockerfile.dockerignore.
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: qq-bot
+    env_file:
+      - ../.env
+    volumes:
+      # News SQLite database (NEWS_DB_PATH, default data/news.db).
+      - ../data:/app/data
+    # A real init as PID 1: clean SIGTERM shutdown + zombie reaping for the
+    # long-running bot process.
+    init: true
+    restart: unless-stopped
