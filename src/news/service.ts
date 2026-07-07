@@ -22,7 +22,7 @@ import { fetchFeed } from './fetch-feed'
 import { resolveFeeds } from './feeds'
 import { summarizeNews, type NewsItemForSummary } from './summarize'
 
-const SNIPPET_MAX = 300
+const SNIPPET_MAX = 500
 const REFRESH_CONCURRENCY = 4
 
 /** The news "day" and the daily schedule are both anchored to UTC+8. */
@@ -281,7 +281,10 @@ async function refreshFeeds(rows: FeedRow[], logger: NewsLogger): Promise<void> 
 // Query
 // ---------------------------------------------------------------------------
 
-/** Newest items with published_at in [startMs, endMs), across the given feeds. */
+/** Newest items with published_at in [startMs, endMs), across the given feeds.
+ *  Keyed on published_at so the digest only carries items the feeds actually
+ *  published within the window (the last NEWS_LOOKBACK_HOURS), not older items
+ *  that merely resurfaced in a feed. */
 function itemsInWindow(startMs: number, endMs: number, feeds: readonly string[]): ItemRowWithFeed[] {
   if (feeds.length === 0) return []
   const params: SqlParam[] = [...feeds, startMs, endMs, config.newsMaxItems]
@@ -307,7 +310,8 @@ function lastSummaryAt(): number | null {
 }
 
 /** Total stored items + newest published_at across the given feeds (diagnostics
- *  for an empty run: distinguishes "no feed items fetched" from "all too old"). */
+ *  for an empty run: distinguishes "no feed items fetched" from "all too old").
+ *  newest is published_at to match the itemsInWindow gate. */
 function feedItemStats(feeds: readonly string[]): { total: number; newest: number | null } {
   if (feeds.length === 0) return { total: 0, newest: null }
   const row = queryGet<{ total: number; newest: number | null }>(
@@ -354,13 +358,14 @@ async function runDailySummary(logger: NewsLogger): Promise<SummaryRun> {
   const rows = ensureConfiguredFeeds(feeds)
   await refreshFeeds(rows, logger)
 
-  // Collect at least the last NEWS_LOOKBACK_HOURS, extending further back if the
-  // previous summary is older (missed runs). A fixed calendar-day range would
-  // silently drop items published between the run hour and midnight — older than
-  // the next day's lower bound, so no run would ever pick them up. Capping recent
-  // summaries at now-lookback means a mid-day manual `news refresh` still yields a
-  // full-window digest rather than only the sliver since the last refresh, so
-  // refreshing never shrinks the scheduled summary's coverage.
+  // Collect items published in at least the last NEWS_LOOKBACK_HOURS, extending
+  // further back if the previous summary is older (missed runs). A fixed
+  // calendar-day range would silently drop items published between the run hour and
+  // midnight — older than the next day's lower bound, so no run would ever pick
+  // them up. Capping recent summaries at now-lookback means a mid-day manual
+  // `news refresh` still yields a full-window digest rather than only the sliver
+  // since the last refresh, so refreshing never shrinks the scheduled summary's
+  // coverage.
   const now = Date.now()
   const lookbackMs = config.newsLookbackHours * 3_600_000
   const last = lastSummaryAt()
@@ -391,6 +396,7 @@ async function runDailySummary(logger: NewsLogger): Promise<SummaryRun> {
     source: sourceName(row),
     snippet: row.summary,
     publishedAt: row.published_at,
+    link: row.link,
   }))
 
   logger.info(`[news] summarizing ${items.length} items for ${date} via ${config.newsModel}`)

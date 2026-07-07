@@ -1,4 +1,4 @@
-import type { Bot, GroupMessageEvent, PrivateMessageEvent } from 'qq-official-bot'
+import { segment, type Bot, type GroupMessageEvent, type PrivateMessageEvent } from 'qq-official-bot'
 import { config } from './config'
 import { AntiAd, startAdRulesRefresh } from './ad'
 import { generateDailySummary, getStoredSummary, parseNewsDate } from './news/service'
@@ -126,8 +126,9 @@ async function handleNews(
       await e.reply(date ? `No AI news summary for ${date}.` : 'No AI news summary available yet.')
       return
     }
-    const header = `AI news ${result.date} (${result.itemCount} items):\n`
-    await e.reply(`${header}${result.summary}`.slice(0, NEWS_REPLY_MAX))
+    // Delivered as a Markdown message so the per-item source links render.
+    const md = `**AI news ${result.date}**\n\n${result.summary}`.slice(0, NEWS_REPLY_MAX)
+    await e.reply(segment.markdown(md))
   } catch (err) {
     bot.logger.error('[news] failed to read summary:', err)
     await e.reply('Failed to fetch the news summary, please try again later.')
@@ -168,8 +169,9 @@ async function handleNewsRefresh(
       await e.reply('No AI news summary available.')
       return
     }
-    const header = `AI news ${result.date} (${result.itemCount} items):\n`
-    await e.reply(`${header}${result.summary}`.slice(0, NEWS_REPLY_MAX))
+    // Delivered as a Markdown message so the per-item source links render.
+    const md = `**AI news ${result.date}**\n\n${result.summary}`.slice(0, NEWS_REPLY_MAX)
+    await e.reply(segment.markdown(md))
   } catch (err) {
     bot.logger.error('[news] manual refresh failed:', err)
     await e.reply('Failed to refresh the news summary, please try again later.')

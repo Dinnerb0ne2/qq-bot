@@ -90,7 +90,7 @@ export const config = {
   /** Model used to summarize the news */
   newsModel: process.env.NEWS_MODEL || 'deepseek-v4-pro',
   /** Max output tokens for a summary request */
-  newsMaxTokens: intEnv('NEWS_MAX_TOKENS', 8000),
+  newsMaxTokens: intEnv('NEWS_MAX_TOKENS', 64000),
   /** OPML URL listing the RSS/Atom feeds to poll */
   newsOpmlUrl: process.env.NEWS_OPML_URL || DEFAULT_NEWS_OPML_URL,
   /** Offline fallback feed list (also a NEWS_FEEDS override for the OPML) */
