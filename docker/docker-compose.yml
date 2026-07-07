@@ -1,18 +1,12 @@
-# Run qq-bot with Docker Compose. This file lives in docker/, so run it from the
-# repo root with an explicit -f (relative paths below resolve against docker/,
-# hence the ../ prefixes that point back at the repo root):
-#   docker compose -f docker/docker-compose.yml up -d          # pull ghcr.io/isomoes/qq-bot:latest and start
-#   docker compose -f docker/docker-compose.yml up -d --build  # build from this checkout instead of pulling
-#
-# Credentials are read from the repo-root .env file (copy .env.example -> .env
-# and fill in BOT_APPID / BOT_SECRET). The bot is an outbound WebSocket client,
-# so it exposes no port. The `news` command stores fetched RSS items in a SQLite
-# file under /app/data, kept on the ../data bind mount (repo-root ./data) below.
+# Run from the repo root with an explicit -f (paths below are relative to docker/):
+#   docker compose -f docker/docker-compose.yml up -d           # pull & start
+#   docker compose -f docker/docker-compose.yml up -d --build   # build from this checkout
+# Credentials come from the repo-root .env (copy .env.example, fill BOT_APPID/BOT_SECRET).
+name: qq-bot # resources are qq-bot_* rather than the parent dir's name
 services:
   qq-bot:
     image: ghcr.io/isomoes/qq-bot:latest
-    # Build context is the repo root (one level up), with the Dockerfile in this
-    # docker/ folder. Its .dockerignore is docker/Dockerfile.dockerignore.
+    # Context is the repo root; Dockerfile + its .dockerignore live in docker/.
     build:
       context: ..
       dockerfile: docker/Dockerfile
@@ -20,9 +14,13 @@ services:
     env_file:
       - ../.env
     volumes:
-      # News SQLite database (NEWS_DB_PATH, default data/news.db).
-      - ../data:/app/data
-    # A real init as PID 1: clean SIGTERM shutdown + zombie reaping for the
-    # long-running bot process.
-    init: true
+      # News SQLite DB (NEWS_DB_PATH, default data/news.db). Named volume, not a
+      # bind mount: it inherits the image's node:node (uid 1000) ownership, so the
+      # non-root container can write it. A host bind mount takes the host dir's
+      # ownership and, if not uid-1000-writable, fails with SQLITE_CANTOPEN.
+      - qq-bot-data:/app/data
+    init: true # real PID 1: clean SIGTERM shutdown + zombie reaping
     restart: unless-stopped
+
+volumes:
+  qq-bot-data:
