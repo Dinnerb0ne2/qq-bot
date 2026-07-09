@@ -42,6 +42,18 @@ CREATE TABLE IF NOT EXISTS summaries (
   created_at INTEGER NOT NULL DEFAULT (unixepoch('now') * 1000),
   PRIMARY KEY (date, lang)
 );
+
+-- One row per summary delivered to a group, written only after the send
+-- succeeds. Distinguishes generated-and-pushed from generated-but-unpushed
+-- across restarts, so the in-process retry and the startup delivery sweep
+-- re-send to exactly the missed groups and never double-post.
+CREATE TABLE IF NOT EXISTS summary_pushes (
+  date      TEXT    NOT NULL,
+  lang      TEXT    NOT NULL,
+  group_id  TEXT    NOT NULL,
+  pushed_at INTEGER NOT NULL DEFAULT (unixepoch('now') * 1000),
+  PRIMARY KEY (date, lang, group_id)
+);
 `
 
 let handle: DatabaseSync | null = null

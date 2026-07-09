@@ -26,15 +26,15 @@ function hourEnv(name: string, fallback: number): number {
   return Number.isInteger(n) && n >= 0 && n <= 23 ? n : fallback
 }
 
-/** Parse a comma- or newline-separated URL list env var. */
+/** Parse a comma- or newline-separated string-list env var (URLs, ids, …). */
 function listEnv(name: string, fallback: readonly string[]): string[] {
   const raw = process.env[name]
   if (!raw) return [...fallback]
-  const urls = raw
+  const values = raw
     .split(/[\n,]/)
     .map((s) => s.trim())
     .filter(Boolean)
-  return urls.length > 0 ? urls : [...fallback]
+  return values.length > 0 ? values : [...fallback]
 }
 
 /**
@@ -106,6 +106,11 @@ export const config = {
   newsLookbackHours: intEnv('NEWS_LOOKBACK_HOURS', 24),
   /** Hour of day (UTC+8) at which the daily summary job runs (default 22) */
   newsSummaryHour: hourEnv('NEWS_SUMMARY_HOUR', 22),
+  /** Group openids the daily summary is auto-pushed to once generated
+   *  (comma/newline separated; empty disables pushing). These are the opaque
+   *  ids from the `recv from Group(...)` log line, not visible QQ group
+   *  numbers. Each group's owner must also enable 机器人主动在群聊内发言. */
+  newsPushGroups: listEnv('NEWS_PUSH_GROUPS', []),
   /** Allow the on-demand `news refresh` command. On in local dev — the `dev`
    *  npm script sets NEWS_MANUAL_REFRESH=true — and off in production (`start`
    *  / Docker never set it), where the summary is scheduled-only. */

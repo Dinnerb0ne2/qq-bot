@@ -1,6 +1,8 @@
 import { segment, type Bot, type GroupMessageEvent, type PrivateMessageEvent } from 'qq-official-bot'
 import { config } from './config'
 import { AntiAd, startAdRulesRefresh } from './ad'
+import { formatNewsMarkdown } from './news/format'
+import { pushDailySummary } from './news/push'
 import { generateDailySummary, getStoredSummary, parseNewsDate } from './news/service'
 import { startDailyNewsSummary } from './news/scheduler'
 
@@ -20,14 +22,6 @@ export function registerHandlers(bot: Bot): void {
     })
   }
 
-  // Daily news summary: one scheduled LLM call at NEWS_SUMMARY_HOUR:00 UTC+8.
-  // The `news` command only reads the stored result, so it stays free and fast.
-  if (config.newsApiKey) {
-    startDailyNewsSummary({ hour: config.newsSummaryHour, logger: bot.logger })
-  } else {
-    bot.logger.info('[news] daily summary disabled (set NEWS_LLM_API_KEY to enable)')
-  }
-
   bot.on('message.group', (e) => {
     handleGroupMessage(bot, antiAd, e).catch((err) => bot.logger.error('Failed to handle group message:', err))
   })
@@ -35,6 +29,29 @@ export function registerHandlers(bot: Bot): void {
   bot.on('message.private', (e) => {
     handlePrivateMessage(bot, e).catch((err) => bot.logger.error('Failed to handle private message:', err))
   })
+}
+
+/**
+ * Start the daily news summary: one scheduled LLM call at NEWS_SUMMARY_HOUR:00
+ * UTC+8, auto-pushed to the NEWS_PUSH_GROUPS once stored. The `news` command
+ * only reads the stored result, so it stays free and fast.
+ *
+ * Call this only AFTER `bot.start()` resolves — the scheduler's startup sweep
+ * may push to groups immediately, which needs the SDK's access token.
+ */
+export function startNewsSchedule(bot: Bot): void {
+  if (config.newsApiKey) {
+    startDailyNewsSummary({
+      hour: config.newsSummaryHour,
+      logger: bot.logger,
+      onSummary: (date) => pushDailySummary(bot, date, bot.logger),
+    })
+  } else {
+    bot.logger.info('[news] daily summary disabled (set NEWS_LLM_API_KEY to enable)')
+    if (config.newsPushGroups.length > 0) {
+      bot.logger.warn('[news] NEWS_PUSH_GROUPS is set but has no effect while the summary job is disabled')
+    }
+  }
 }
 
 /** Handle group messages */
@@ -84,9 +101,6 @@ async function dispatchCommand(
   }
 }
 
-/** QQ group messages have a length cap; stay comfortably under it. */
-const NEWS_REPLY_MAX = 3500
-
 /**
  * `news [YYYY-MM-DD]` — reply with a stored daily summary. No argument returns
  * the most recent one; a date returns that day's. Read-only: the summary is
@@ -127,8 +141,7 @@ async function handleNews(
       return
     }
     // Delivered as a Markdown message so the per-item source links render.
-    const md = `**AI news ${result.date}**\n\n${result.summary}`.slice(0, NEWS_REPLY_MAX)
-    await e.reply(segment.markdown(md))
+    await e.reply(segment.markdown(formatNewsMarkdown(result.date, result.summary)))
   } catch (err) {
     bot.logger.error('[news] failed to read summary:', err)
     await e.reply('Failed to fetch the news summary, please try again later.')
@@ -170,8 +183,7 @@ async function handleNewsRefresh(
       return
     }
     // Delivered as a Markdown message so the per-item source links render.
-    const md = `**AI news ${result.date}**\n\n${result.summary}`.slice(0, NEWS_REPLY_MAX)
-    await e.reply(segment.markdown(md))
+    await e.reply(segment.markdown(formatNewsMarkdown(result.date, result.summary)))
   } catch (err) {
     bot.logger.error('[news] manual refresh failed:', err)
     await e.reply('Failed to refresh the news summary, please try again later.')

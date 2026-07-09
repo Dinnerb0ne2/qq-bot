@@ -60,6 +60,12 @@ export function todayDate(): string {
   return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`
 }
 
+/** Yesterday's date as YYYY-MM-DD in UTC+8. */
+export function yesterdayDate(): string {
+  const d = new Date(Date.now() + TZ_OFFSET_MS - DAY_MS)
+  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`
+}
+
 /**
  * Validate a `news` argument. Empty means today; otherwise it must be a real
  * YYYY-MM-DD calendar date. Returns null when invalid.

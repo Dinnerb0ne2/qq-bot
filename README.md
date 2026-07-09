@@ -18,7 +18,8 @@ over WebSocket and reacts to group, private (C2C), and guild message events.
 - **Daily AI news digest** — a scheduled job polls RSS/Atom feeds (resolved from
   a remote OPML), stores items in SQLite, and has an LLM (DeepSeek via an
   Anthropic-compatible endpoint) write one summary a day; the `news` command
-  serves it instantly as Markdown with clickable per-source links.
+  serves it instantly as Markdown with clickable per-source links, and the bot
+  auto-pushes it to the groups listed in `NEWS_PUSH_GROUPS`.
 - **Runs anywhere** — ships as a public Docker image on ghcr.io: a port-less
   outbound WebSocket client configured entirely through environment variables.
 
@@ -76,6 +77,7 @@ Configured in `.env` (see `.env.example` for the full annotated list):
 | `NEWS_MAX_ITEMS`           |          | Max items per day handed to the summarizer (default `30`) |
 | `NEWS_LOOKBACK_HOURS`      |          | How far back a run collects items (default `24`; raise for quiet feeds) |
 | `NEWS_SUMMARY_HOUR`        |          | Hour (UTC+8, 0–23) the daily summary job runs (default `22`) |
+| `NEWS_PUSH_GROUPS`         |          | Group openids to auto-push the daily summary to (comma/newline separated; empty disables — see [AI news](#ai-news-news-command)) |
 | `NEWS_MANUAL_REFRESH`      |          | Enable the `news refresh` command (dev only; off in production) |
 | `NEWS_LANG`                |          | Language of the generated summary (default `Chinese`)   |
 
@@ -140,9 +142,29 @@ per-source link — so the model never emits raw URLs, and feed titles/snippets
 are wrapped as untrusted `<item>` data a compromised feed can't use to steer the
 output.
 
+### Auto-push to groups
+
+With `NEWS_PUSH_GROUPS` set, the freshly generated summary is also **pushed**
+to each listed group right after the scheduled run. A failed send is retried a
+few times on a 15-minute timer, and on every startup the last two days'
+summaries are re-offered — so a crash, a transient send failure, or a fresh
+deploy (which delivers the most recent stored digest immediately) doesn't drop
+a push, while a per-group marker in SQLite ensures a group never receives the
+same day's summary twice. Days with no news push nothing. Two prerequisites:
+
+1. **Group openid** — the ids in `NEWS_PUSH_GROUPS` are the opaque per-bot
+   openids, *not* the QQ group numbers shown in the client. To find one,
+   @mention the bot in the target group and copy the id from the
+   `recv from Group(...)` line in the logs.
+2. **Owner opt-in** — pushes are "active" messages (QQ re-opened them for
+   groups on 2026-06-22): the group owner must enable
+   **机器人主动在群聊内发言** in the group's robot settings, or sends fail with
+   code `40034102` (logged with a hint).
+
 During local dev (`pnpm dev`), `news refresh` re-runs the job on demand and
 replies with the fresh summary; it's disabled in production (scheduled-only, via
-`NEWS_MANUAL_REFRESH`).
+`NEWS_MANUAL_REFRESH`). A dev refresh never triggers a group push — only the
+scheduled job (and its startup catch-up) delivers to groups.
 
 ## Ad moderation
 

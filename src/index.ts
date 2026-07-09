@@ -1,6 +1,6 @@
 import { Bot, ReceiverMode } from 'qq-official-bot'
 import { config } from './config'
-import { registerHandlers } from './handlers'
+import { registerHandlers, startNewsSchedule } from './handlers'
 
 async function main(): Promise<void> {
   const bot = new Bot({
@@ -23,6 +23,9 @@ async function main(): Promise<void> {
   registerHandlers(bot)
 
   await bot.start()
+  // After start(): the scheduler's startup sweep can push to groups right
+  // away, and sends made before start() would go out without an access token.
+  startNewsSchedule(bot)
   bot.logger.info('QQ bot started')
 }
 
