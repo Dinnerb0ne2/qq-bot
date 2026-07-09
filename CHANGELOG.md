@@ -5,6 +5,10 @@ All notable changes to this project are recorded here.
 Format per entry: `<type>: <commit message> (@who) <hash>`
 Entries are grouped by version, newest first.
 
+## 0.2.2
+
+- feat(news): auto-push the daily summary to configured groups (@isomoes) 775feab
+
 ## 0.2.1
 
 - refactor(config): load .env via explicit dotenv call (@isomoes) c178147

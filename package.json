@@ -1,6 +1,6 @@
 {
   "name": "qq-bot",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "QQ group management bot built on the qq-official-bot SDK",
   "license": "MIT",
