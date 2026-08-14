@@ -70,8 +70,8 @@ function render(text: string, settings: AdSettings): void {
   const done = a.flagged ? '★ 判定为广告 → 撤回' : '· 非广告 → 不撤回'
 
   console.log(`\n${bar}`)
-  console.log(`输入: ${a.text}`)
-  console.log(`长度: ${a.length} 字`)
+  console.log(`输入: ${a.text.replace(/\r?\n/g, '\\n')}`)
+  console.log(`长度: ${a.length} `)
 
   const feat = a.features
   const feats = [
@@ -95,25 +95,25 @@ function render(text: string, settings: AdSettings): void {
       console.log(keywordTable(a).join('\n'))
       console.log(`  强信号词(strong/高LR): ${a.hardKeyword ? '是' : '否'}`)
       const softOnly = !a.hardKeyword && !a.urls.some((u) => !u.benign) && !a.features.code && !a.features.service
-      if (softOnly) console.log('  注: 无 strong 词/可疑URL/优惠码/服务兜售 → 广告特征未共现, 不进关键词评分')
+      if (softOnly) console.log('  无 strong 词/可疑URL/优惠码/服务兜售 → 广告特征未共现, 不进关键词评分')
     } else {
       console.log(`  未达到评分门槛, 跳过关键词评分`)
     }
   }
 
-  console.log(`\n[URL 检测]`)
+  console.log(`\n[URL]`)
   console.log(urlSection(a).join('\n'))
 
-  console.log(`\n[证据汇总]`)
+  console.log(`\n[score]`)
   const damp =
     a.dampeningFactor !== 1 ? ` (语气衰减 ×${a.dampeningFactor.toFixed(2)}${a.reply ? ', 回复' : ''}${a.features.question ? ', 提问' : ''}${a.features.collab ? ', 协作' : ''})` : ''
-  console.log(`  先验 logit   : ${sign(a.priorLogit)}${a.priorLogit.toFixed(4)}`)
-  console.log(`  关键词证据   : ${sign(a.keywordLogOdds)}${a.keywordLogOdds.toFixed(4)}${damp}`)
-  if (a.contactLogOdds !== 0) console.log(`  联系方式证据 : ${sign(a.contactLogOdds)}${a.contactLogOdds.toFixed(4)}`)
-  if (a.structureLogOdds !== 0) console.log(`  结构证据     : ${sign(a.structureLogOdds)}${a.structureLogOdds.toFixed(4)}`)
-  console.log(`  长度证据     : ${sign(a.lengthLogOdds)}${a.lengthLogOdds.toFixed(4)}`)
-  console.log(`  URL 证据     : ${sign(a.urlLogOdds)}${a.urlLogOdds.toFixed(4)}`)
-  console.log(`  ──后验 log-odds: ${sign(a.logOdds)}${a.logOdds.toFixed(4)}`)
+  console.log(`  logit         : ${sign(a.priorLogit)}${a.priorLogit.toFixed(4)}`)
+  console.log(`  keyword       : ${sign(a.keywordLogOdds)}${a.keywordLogOdds.toFixed(4)}${damp}`)
+  if (a.contactLogOdds !== 0) console.log(`  contact    : ${sign(a.contactLogOdds)}${a.contactLogOdds.toFixed(4)}`)
+  if (a.structureLogOdds !== 0) console.log(`  construct     : ${sign(a.structureLogOdds)}${a.structureLogOdds.toFixed(4)}`)
+  console.log(`  length        : ${sign(a.lengthLogOdds)}${a.lengthLogOdds.toFixed(4)}`)
+  console.log(`  URL           : ${sign(a.urlLogOdds)}${a.urlLogOdds.toFixed(4)}`)
+  console.log(`  log-odds      : ${sign(a.logOdds)}${a.logOdds.toFixed(4)}`)
   console.log(`  置信度 P(ad)  : ${a.probability.toFixed(4)}`)
   console.log(`  阈值          : ${a.threshold}`)
   console.log(`  结论          : ${done}`)

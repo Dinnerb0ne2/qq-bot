@@ -147,6 +147,14 @@ describe('detectAd (driven by config/ad.json)', () => {
     assert.equal(detectAd('今天天气不错', settings), null)
   })
 
+  it('multi-line messages are analyzed as a single message', () => {
+    // A promo spread over several lines still co-occurs and flags.
+    assert.ok(detectAd('秒杀半价！\n优惠券领取：\n链接在下面，先到先得', settings))
+    // A multi-line discussion keeps the dampened / no-pitch behavior.
+    assert.equal(detectAd('请问有人推荐训练营吗\n报名链接发我一下\n谢谢', settings), null)
+    assert.equal(detectAd('有H100出租\n按小时计费\n欢迎联系客服', settings), null)
+  })
+
   it('resetAdRules restores the config base', () => {
     resetAdRules()
     const matcher = getAdKeywordMatcher()
