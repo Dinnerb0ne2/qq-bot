@@ -249,7 +249,11 @@ export function loadAdConfig(): LoadedAdConfig {
       }
     }
   }
-  return parseAdConfig('{}')
+  return {
+    ...parseAdConfig('{}'),
+    source: 'defaults',
+    notes: [`config file ${filePath} does not exist; using defaults`],
+  }
 }
 
 let cached: LoadedAdConfig | null = null

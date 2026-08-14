@@ -15,10 +15,21 @@ describe('extractUrls', () => {
     assert.deepEqual(urls, ['https://example.com/a?b=1', 'http://x.cn'])
   })
 
+  it('strips terminal English and Chinese sentence punctuation', () => {
+    assert.deepEqual(extractUrls('推荐 https://jd.com。另见 https://example.com!'), [
+      'https://jd.com',
+      'https://example.com',
+    ])
+  })
+
   it('extracts bare domains without a scheme', () => {
     const urls = extractUrls('去 www.example.com/abc 看看，或者 example.com')
     assert.ok(urls.includes('www.example.com'))
     assert.ok(urls.includes('example.com'))
+  })
+
+  it('extracts bare domains adjacent to Chinese text', () => {
+    assert.deepEqual(extractUrls('点击evil.xyz或访问www.evil.top'), ['evil.xyz', 'www.evil.top'])
   })
 
   it('does not treat plain words as URLs', () => {
@@ -54,6 +65,7 @@ describe('hasSuspiciousUrl', () => {
     assert.equal(hasSuspiciousUrl('https://item.jd.com/123', safe), false)
     assert.equal(hasSuspiciousUrl('https://www.bilibili.com/video/BV12345', safe), false)
     assert.equal(hasSuspiciousUrl('https://www.gov.cn/notice', safe), false)
+    assert.equal(hasSuspiciousUrl('优惠 打折 促销 https://jd.com。', safe), false)
   })
 
   it('passes text without any URL', () => {
@@ -99,6 +111,13 @@ describe('scanUrls', () => {
     assert.deepEqual(scanUrls('https://evil.com/abc', safe, tld), {
       suspiciousUrl: true,
       suspiciousTld: false,
+    })
+  })
+
+  it('scans every bare domain regardless of its order', () => {
+    assert.deepEqual(scanUrls('jd.com evil.xyz', safe, tlds), {
+      suspiciousUrl: true,
+      suspiciousTld: true,
     })
   })
 })

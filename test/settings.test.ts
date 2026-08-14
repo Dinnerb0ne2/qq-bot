@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseAdConfig } from '../src/ad/settings'
+import { loadAdConfig, parseAdConfig } from '../src/ad/settings'
 
 describe('parseAdConfig', () => {
   it('loads keywords, strong keywords, patterns and probability params', () => {
@@ -121,5 +121,20 @@ describe('parseAdConfig', () => {
     const cfg = parseAdConfig(JSON.stringify({ patterns: ['(unclosed', '[z-a]'] }))
     assert.equal(cfg.patterns.length, 0)
     assert.ok(cfg.notes.some((n) => n.startsWith('pattern skipped')))
+  })
+})
+
+describe('loadAdConfig', () => {
+  it('reports a missing configured file as a defaults fallback', () => {
+    const previous = process.env.AD_CONFIG_PATH
+    process.env.AD_CONFIG_PATH = `/tmp/qq-bot-missing-ad-config-${process.pid}.json`
+    try {
+      const cfg = loadAdConfig()
+      assert.equal(cfg.source, 'defaults')
+      assert.ok(cfg.notes.some((note) => note.includes('does not exist')))
+    } finally {
+      if (previous === undefined) delete process.env.AD_CONFIG_PATH
+      else process.env.AD_CONFIG_PATH = previous
+    }
   })
 })

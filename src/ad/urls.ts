@@ -42,15 +42,20 @@ export const DEFAULT_SUSPICIOUS_TLDS: readonly string[] = [
 ]
 
 /** Scheme'd URLs, e.g. https://example.com/path?q=1. */
-const URL_RE = /https?:\/\/[^\s<>"'（）()]+/gi
+const URL_RE = /https?:\/\/[^\s<>"'（）()，。！？；：、…）》【】〔〕「」『』“”‘’]+/gi
 /** Bare domains, e.g. www.example.com or example.com/abc (no scheme). */
-const BARE_HOST_RE = /(?:^|[\s（(])((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,})(?::\d+)?/gi
+const BARE_HOST_RE = /(?<![a-z0-9@\/.-])((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,})(?::\d+)?/gi
+const BARE_HOST_TOKEN_RE = /^((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,})(?::\d+)?/i
+/** Punctuation commonly attached to a URL at the end of a sentence. */
+const TRAILING_URL_PUNCTUATION_RE = /[.,!?;:，。！？；：、…）》】〕」』”’]+$/u
 
 /** Extract the host of a URL token (drops scheme, port and path). */
 function hostOf(url: string): string {
   const scheme = /^https?:\/\/([^\/:?#\s]+)/i.exec(url)
   if (scheme) return scheme[1].toLowerCase()
-  const bare = BARE_HOST_RE.exec(url)
+  // Use a non-global expression here: BARE_HOST_RE is stateful and is reserved
+  // for walking the complete message in extractUrls().
+  const bare = BARE_HOST_TOKEN_RE.exec(url)
   return bare ? bare[1].toLowerCase() : ''
 }
 
@@ -62,7 +67,8 @@ export function extractUrls(text: string): string[] {
   URL_RE.lastIndex = 0
   let m: RegExpExecArray | null
   while ((m = URL_RE.exec(text)) !== null) {
-    out.add(m[0].toLowerCase())
+    const url = m[0].replace(TRAILING_URL_PUNCTUATION_RE, '')
+    if (url) out.add(url.toLowerCase())
     if (m[0].length === 0) URL_RE.lastIndex++
   }
   BARE_HOST_RE.lastIndex = 0
