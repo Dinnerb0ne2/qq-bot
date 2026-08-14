@@ -80,6 +80,7 @@ function render(text: string, settings: AdSettings): void {
     feat.register ? '报名漏斗' : '',
     feat.service ? '服务兜售' : '',
     feat.cta ? '行动号召' : '',
+    feat.pitch ? '推销话术' : '',
     feat.question ? '提问语气' : '',
     feat.collab ? '协作/求助' : '',
   ].filter(Boolean)
@@ -94,8 +95,10 @@ function render(text: string, settings: AdSettings): void {
     if (a.keywords.length > 0) {
       console.log(keywordTable(a).join('\n'))
       console.log(`  强信号词(strong/高LR): ${a.hardKeyword ? '是' : '否'}`)
-      const softOnly = !a.hardKeyword && !a.urls.some((u) => !u.benign) && !a.features.code && !a.features.service
-      if (softOnly) console.log('  无 strong 词/可疑URL/优惠码/服务兜售 → 广告特征未共现, 不进关键词评分')
+      const softOnly =
+        !a.hardKeyword && !a.urls.some((u) => !u.benign) && !a.features.code && !a.features.service &&
+        !a.features.price && !a.features.register && !a.features.cta && !a.features.pitch
+      if (softOnly) console.log('  无 strong 词/可疑URL/促销结构 → 广告特征未共现, 不进关键词评分')
     } else {
       console.log(`  未达到评分门槛, 跳过关键词评分`)
     }
@@ -110,6 +113,7 @@ function render(text: string, settings: AdSettings): void {
   console.log(`  logit         : ${sign(a.priorLogit)}${a.priorLogit.toFixed(4)}`)
   console.log(`  keyword       : ${sign(a.keywordLogOdds)}${a.keywordLogOdds.toFixed(4)}${damp}`)
   if (a.contactLogOdds !== 0) console.log(`  contact    : ${sign(a.contactLogOdds)}${a.contactLogOdds.toFixed(4)}`)
+  if (a.pitchLogOdds !== 0) console.log(`  pitch         : ${sign(a.pitchLogOdds)}${a.pitchLogOdds.toFixed(4)}${damp}`)
   if (a.structureLogOdds !== 0) console.log(`  construct     : ${sign(a.structureLogOdds)}${a.structureLogOdds.toFixed(4)}`)
   console.log(`  length        : ${sign(a.lengthLogOdds)}${a.lengthLogOdds.toFixed(4)}`)
   console.log(`  URL           : ${sign(a.urlLogOdds)}${a.urlLogOdds.toFixed(4)}`)

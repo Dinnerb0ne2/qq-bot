@@ -36,12 +36,13 @@ describe('detectAd (driven by config/ad.json)', () => {
     // "加我私聊" / "加我微信私聊" are private-chat invitations — bare contact
     // words with no promotional pitch and no link. Contact words are general
     // hits; without a strong promo keyword or a suspicious URL they never flag.
-    // "加我私聊 优惠 先到先得 名额有限" is also not a pitch: after the urgency
-    // words were demoted to general hits there is no strong signal left.
     assert.equal(detectAd('加我私聊', settings), null)
     assert.equal(detectAd('加我微信私聊', settings), null)
     assert.equal(detectAd('加我qq私聊', settings), null)
-    assert.equal(detectAd('加我私聊 优惠 先到先得 名额有限', settings), null)
+    // Contact words paired with a promo/urgency pitch form the ad's structure:
+    // "加我私聊 优惠 先到先得 名额有限" is the same pitch+hook shape as
+    // "团购优惠券，联系客服" and now flags.
+    assert.ok(detectAd('加我私聊 优惠 先到先得 名额有限', settings))
     // A concrete promo code is a structural offer, so the same contact words DO flag.
     const hit = detectAd('加我微信 优惠码 ABC123 立减100', settings)
     assert.ok(hit, 'a structured message with a promo code should flag')
@@ -153,6 +154,28 @@ describe('detectAd (driven by config/ad.json)', () => {
     // A multi-line discussion keeps the dampened / no-pitch behavior.
     assert.equal(detectAd('请问有人推荐训练营吗\n报名链接发我一下\n谢谢', settings), null)
     assert.equal(detectAd('有H100出租\n按小时计费\n欢迎联系客服', settings), null)
+  })
+
+  it('demoted promo words paired with a hook are a pitch again', () => {
+    // 团购/优惠券/先到先得 were demoted from strong, so alone they are weak
+    // hits — but next to a contact hook (联系客服/加我私聊) they form the ad's
+    // structure and must flag again.
+    assert.ok(detectAd('限时团购，优惠券先到先得，联系客服', settings))
+    assert.ok(detectAd('兼职日薪300，加我私聊', settings))
+    assert.ok(detectAd('出售账号，低价优惠，加我私聊', settings))
+  })
+
+  it('price/register/cta structures can trigger detection on their own', () => {
+    // An explicit price promo + call-to-action is a pitch even without a strong
+    // keyword or a suspicious URL.
+    assert.ok(detectAd('限时优惠 满100减50 马上报名', settings))
+  })
+
+  it('a lone pitch word or a lone hook is not a pitch', () => {
+    // 名额有限/先到先得 in an event notice — no hook — stays chat.
+    assert.equal(detectAd('名额有限 先到先得', settings), null)
+    // A lone contact hook without any pitch word is a private invitation.
+    assert.equal(detectAd('扫码进群', settings), null)
   })
 
   it('resetAdRules restores the config base', () => {

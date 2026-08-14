@@ -239,6 +239,7 @@ export function parseAdConfig(body: string): LoadedAdConfig {
   lrParam('registerLr')
   lrParam('serviceLr')
   lrParam('ctaLr')
+  lrParam('pitchLr')
 
   const factorParam = (name: 'questionFactor' | 'replyFactor' | 'collabFactor'): void => {
     const v = num(name)

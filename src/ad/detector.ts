@@ -19,8 +19,10 @@
  *
  * A flag requires **ad features to co-occur** — no single indicator decides on
  * its own: the message must meet the distinct-hit floor AND either contain a
- * strong keyword (a promo/offer/urgency pitch — the thing being advertised) or
- * a suspicious URL. Bare contact words (`加我 私聊 微信 …`) are general hits that
+ * strong keyword (a promo/offer/urgency pitch — the thing being advertised), a
+ * suspicious URL, or an explicit promotion structure (promo code, price pitch,
+ * enrollment funnel, paid-service pitch, call-to-action, or a pitch+contact
+ * cluster). Bare contact words (`加我 私聊 微信 …`) are general hits that
  * only *reinforce* a real pitch; a pile of them alone (`客服 咨询 QQ …`), a lone
  * keyword in a very long post, or a bare recommendation link never flag — they
  * only interact with each other. High-signal contact/promo *patterns* (e.g.
@@ -106,6 +108,9 @@ export interface AdAnalysis {
   contactLogOdds: number
   /** Sum of structural-feature ln(LR)s (code/price/register/service/cta). */
   structureLogOdds: number
+  /** Soft evidence from a pitch+contact cluster (团购…联系客服), dampened like
+   *  keyword evidence. */
+  pitchLogOdds: number
   /** Conversational dampener applied to the soft keyword+contact evidence
    *  (product of question/reply/collab factors; 1 when none apply). */
   dampeningFactor: number
@@ -169,7 +174,10 @@ export function analyzeAd(
   const length = text.length
 
   // Structural features: an explicit offer code / price pitch / enrollment
-  // funnel / paid-service pitch / call-to-action.
+  // funnel / paid-service pitch / call-to-action. The pitch+contact cluster is
+  // fuzzier than these — 团购…加我 is often a reply offering help — so its
+  // evidence is dampened with the soft keyword evidence below, while a concrete
+  // code / price / funnel / service offer is never dampened.
   const features = analyzeFeatures(text)
   const structureLogOdds =
     (features.code ? Math.log(settings.bayes.codeLr) : 0) +
@@ -177,7 +185,8 @@ export function analyzeAd(
     (features.register ? Math.log(settings.bayes.registerLr) : 0) +
     (features.service ? Math.log(settings.bayes.serviceLr) : 0) +
     (features.cta ? Math.log(settings.bayes.ctaLr) : 0)
-  const hasStructure = structureLogOdds > 0
+  const pitchLogOdds = features.pitch ? Math.log(settings.bayes.pitchLr) : 0
+  const hasStructure = structureLogOdds > 0 || features.pitch
 
   // Offer patterns hard-flag on their own. Contact patterns hard-flag only when
   // the message is short (nothing else it could be but the hook) or several
@@ -286,7 +295,7 @@ export function analyzeAd(
 
   const logOdds =
     priorLogit +
-    (keywordLogOdds + contactLogOdds) * dampeningFactor * shortScale +
+    (keywordLogOdds + contactLogOdds + pitchLogOdds) * dampeningFactor * shortScale +
     structureLogOdds +
     lengthLogOdds +
     urlLogOdds
@@ -294,14 +303,16 @@ export function analyzeAd(
 
   // Outcome: an offer pattern — or a hard contact-pattern — flags regardless of
   // the score. The keyword path needs the ad features to co-occur (enough hits
-  // or a structure) AND a hard signal (strong keyword, suspicious URL, a
-  // concrete promo code, or an explicit paid-service pitch), and the
+  // or a structure) AND a hard signal (strong keyword, suspicious URL, or any
+  // explicit promotion structure: promo code, paid service, price pitch,
+  // enrollment funnel, call-to-action, or a pitch+contact cluster), and the
   // probability to clear the threshold.
   let trigger: AdAnalysis['trigger']
   if (patterns.length > 0 || contactHard) trigger = 'pattern'
   else if (
     (keywordHits >= settings.minKeywordHits || hasStructure) &&
-    (hardKeyword || suspiciousUrl || features.code || features.service)
+    (hardKeyword || suspiciousUrl || features.code || features.service || features.price ||
+      features.register || features.cta || features.pitch)
   )
     trigger = 'keywords'
   else trigger = 'none'
@@ -323,6 +334,7 @@ export function analyzeAd(
     priorLogit,
     keywordLogOdds,
     contactLogOdds,
+    pitchLogOdds,
     structureLogOdds,
     dampeningFactor,
     reply,

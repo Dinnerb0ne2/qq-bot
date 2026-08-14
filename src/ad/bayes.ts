@@ -114,6 +114,11 @@ export interface AdBayesParams {
   serviceLr: number
   /** Likelihood ratio of a call-to-action phrase (想上车 / 有需要联系 / 欢迎扩散). */
   ctaLr: number
+  /** Likelihood ratio of a pitch+contact structure (团购/优惠券/兼职/出售 …
+   *  adjacent to 联系/加我/私聊). The demoted promo/urgency words are weak on
+   *  their own; paired with a hook they become the ad's call to action, and the
+   *  structure earns as much as a strong keyword. */
+  pitchLr: number
   /** Conversational dampening (0..1] applied to the soft keyword + contact
    *  evidence when the message reads as a question ("有没有…？"). A question is
    *  how a member actually asks the group, not how spam is written. */
@@ -148,6 +153,7 @@ export const DEFAULT_AD_BAYES: AdBayesParams = {
   registerLr: 6,
   serviceLr: 8,
   ctaLr: 5,
+  pitchLr: 40,
   questionFactor: 0.55,
   replyFactor: 0.6,
   collabFactor: 0.7,

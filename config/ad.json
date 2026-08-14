@@ -19,6 +19,7 @@
   "registerLr": 6,
   "serviceLr": 8,
   "ctaLr": 5,
+  "pitchLr": 40,
   "questionFactor": 0.55,
   "replyFactor": 0.6,
   "collabFactor": 0.7,
