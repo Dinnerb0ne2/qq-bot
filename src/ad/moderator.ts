@@ -18,8 +18,42 @@ export class AntiAd {
   private readonly strikes = new Map<string, number>()
   /** Keys already alerted, to avoid duplicate messages. */
   private readonly alerted = new Set<string>()
+  /** Recent messages per group keyed by message_id, so a reply to a recent
+   *  message can be recognised (the QQ API only gives us the referenced
+   *  message_id, not its content). Capped and pruned by age. */
+  private readonly recent = new Map<string, Map<string, { time: number }>>()
+  /** How long a message stays relevant as a reply target. */
+  private static readonly RECENT_TTL_MS = 10 * 60_000
+  /** Max cached messages per group. */
+  private static readonly RECENT_MAX_PER_GROUP = 200
 
   constructor(private readonly bot: Bot) {}
+
+  /** Remember a message as a potential reply target, pruning stale entries. */
+  private remember(e: GroupMessageEvent): void {
+    const now = Date.now()
+    let group = this.recent.get(String(e.group_id))
+    if (!group) {
+      group = new Map()
+      this.recent.set(String(e.group_id), group)
+    }
+    if (group.size >= AntiAd.RECENT_MAX_PER_GROUP) {
+      const oldest = [...group.entries()].sort((a, b) => a[1].time - b[1].time)[0]
+      if (oldest) group.delete(oldest[0])
+    }
+    group.set(String(e.message_id), { time: now })
+    for (const [id, rec] of group) {
+      if (now - rec.time > AntiAd.RECENT_TTL_MS) group.delete(id)
+    }
+  }
+
+  /** True when `e` is a reply to a message the bot has seen recently. */
+  private isReply(e: GroupMessageEvent): boolean {
+    const ref = e.source?.message_id ?? e.source?.id
+    if (ref === undefined) return false
+    const group = this.recent.get(String(e.group_id))
+    return group?.has(String(ref)) === true
+  }
 
   /**
    * Inspect a group message. If it is an ad: recall it, add a strike, and send
@@ -28,7 +62,10 @@ export class AntiAd {
    * @returns true if the message was handled as an ad
    */
   async inspect(e: GroupMessageEvent): Promise<boolean> {
-    const match = detectAd(e.raw_message, getAdSettings())
+    // Remember every message as a potential reply target before judging, so
+    // follow-ups can be recognised as replies.
+    this.remember(e)
+    const match = detectAd(e.raw_message, getAdSettings(), { reply: this.isReply(e) })
     if (!match) return false
 
     const key = `${e.group_id}:${e.user_id}`
