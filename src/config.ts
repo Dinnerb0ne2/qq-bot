@@ -74,14 +74,15 @@ export const config = {
   logLevel: (process.env.LOG_LEVEL ?? 'info') as LogLevel,
   /** Ad offenses by one member before an alert message is sent (default 3) */
   adStrikeLimit: intEnv('AD_STRIKE_LIMIT', 3),
-  /** Minimum distinct ad keywords in a message to flag it as an ad */
-  adMinKeywordHits: intEnv('AD_MIN_KEYWORD_HITS', 2),
   /** URL of the remote ad rules file ([keywords] + [patterns] sections),
-   *  unioned with the built-in lists. Defaults to this repo's docs/ad-rules.txt;
-   *  set AD_RULES_URL= (empty) to disable remote rules entirely. */
+   *  unioned with the config/ad.json base lists. Defaults to this repo's
+   *  docs/ad-rules.txt; set AD_RULES_URL= (empty) to disable remote rules. */
   adRulesUrl: process.env.AD_RULES_URL ?? DEFAULT_AD_RULES_URL,
   /** How often to refresh the remote rules file, in minutes (default 360) */
   adRulesRefreshMinutes: intEnv('AD_RULES_REFRESH_MINUTES', 360),
+  /** Path to the ad config file (forbidden words / intensity / probability
+   *  params). Defaults to config/ad.json next to the working directory. */
+  adConfigPath: process.env.AD_CONFIG_PATH || undefined,
 
   // --- news command ---
   /** API key for the summarizer LLM (DeepSeek by default). Unset disables the

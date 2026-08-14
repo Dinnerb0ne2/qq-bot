@@ -1,6 +1,7 @@
 import type { Bot, GroupMessageEvent } from 'qq-official-bot'
 import { config } from '../config'
 import { detectAd } from './detector'
+import { getAdSettings } from './settings'
 
 /**
  * Ad moderation for group messages.
@@ -27,7 +28,7 @@ export class AntiAd {
    * @returns true if the message was handled as an ad
    */
   async inspect(e: GroupMessageEvent): Promise<boolean> {
-    const match = detectAd(e.raw_message, config.adMinKeywordHits)
+    const match = detectAd(e.raw_message, getAdSettings())
     if (!match) return false
 
     const key = `${e.group_id}:${e.user_id}`

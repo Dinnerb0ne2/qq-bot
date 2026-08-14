@@ -1,12 +1,16 @@
 /**
- * Ad keyword baseline + parser.
+ * Ad keyword defaults + parser.
  *
- * The built-in curated list below is always in effect; rules.ts unions it with
- * the `[keywords]` section of the remote rules file. This module is pure data +
- * parsing — the active state and loading live in rules.ts.
+ * The lists below are the *fallback* defaults: settings.ts loads the active
+ * base lists from config/ad.json (the single source of truth) and uses these
+ * only when the config file is missing or corrupt. rules.ts unions the active
+ * base with the `[keywords]` section of the remote rules file. This module is
+ * pure data + parsing — the active state and loading live in settings.ts /
+ * rules.ts.
  */
 
-/** Bundled baseline keywords, grouped by category. Always in effect. */
+/** Bundled fallback keywords, grouped by category. Used when config/ad.json
+ *  is missing or has no keywords field. */
 export const BUILTIN_AD_KEYWORDS: readonly string[] = [
   // Shopping / promotions
   '促销', '打折', '优惠', '特价', '折扣', '团购', '秒杀', '限时', '抢购', '特惠',
@@ -32,11 +36,98 @@ export const BUILTIN_AD_KEYWORDS: readonly string[] = [
   '日薪', '周薪', '月薪', '年薪', '提成', '佣金', '返利',
 ]
 
+/**
+ * High-signal keywords that are almost never used in benign conversation.
+ *
+ * The general keyword list (the config/ad.json base + the remote `[keywords]`
+ * section) contains many generic words (`客服`, `咨询`, `联系`, `考试`, `QQ`, …)
+ * that appear constantly in normal group chat, so counting them alone over-flags.
+ * The detector therefore only flags a message when it also contains at least one
+ * *strong* keyword (config base + the remote `[strong]` section). Generic words on
+ * their own never flag — they only reinforce a strong signal.
+ *
+ * This list is deliberately conservative: too generous and the false positives
+ * come back. Prefer moving specific terms to the remote `[strong]` section.
+ */
+export const BUILTIN_STRONG_AD_KEYWORDS: readonly string[] = [
+  // Contact methods (rare outside an ad)
+  '加V', '加我', '私聊', '私发', '扫码', '群号', '入群', '热线',
+  // Shopping / promotions
+  '秒杀', '团购', '代购', '包邮', '免费送', '优惠券', '返利', '半价', '一折', '二折', '甩卖', '特价', '抢购',
+  // Money / loans
+  '贷款', '放贷', '提现', '刷单',
+  // Education scams
+  '押题', '保过', '保录', '包过', '提分', '特训',
+  // Jobs
+  '日结', '高薪',
+  // Urgency pushes
+  '仅剩', '速来', '先到先得', '名额有限', '机不可失',
+  // Gaming / gambling
+  '棋牌', '博彩', '赌博', '充值', '代练', '陪玩', '代打',
+  // Health / beauty (the surgical/anabolic ones)
+  '丰胸', '祛斑', '壮阳', '增高', '延时',
+]
+
 /** Ignore keywords shorter/longer than these to avoid over-matching and junk. */
 const MIN_KEYWORD_LENGTH = 2
 const MAX_KEYWORD_LENGTH = 64
 /** Hard cap on how many remote keywords we accept, as a sanity guard. */
 const MAX_KEYWORDS = 100_000
+
+/** Escape a keyword so it is treated as a literal inside a regex. */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/** Short pure-ASCII tokens (QQ, BT, SM, 3P, …) get \b…\b so they don't false
+ *  match inside unrelated words like `BTW` or `JS开发`. CJK and mixed keywords
+ *  keep substring matching (there are no word boundaries in Chinese). */
+const SHORT_ASCII = /^[a-zA-Z0-9]{1,3}$/
+
+/** Compiled form of the active keyword lists, rebuilt only on refresh. */
+export interface CompiledKeywords {
+  /** Single case-insensitive alternation regex over all unique keywords.
+   *  Alternatives are sorted longest-first so the most specific phrase wins at
+   *  any position. Callers must clone it before using exec()/lastIndex. */
+  readonly regex: RegExp
+  /** Lowercase matched text → canonical keyword (for logs). */
+  readonly canonical: ReadonlyMap<string, string>
+  /** Lowercase high-signal keywords; a flag requires at least one of these. */
+  readonly strong: ReadonlySet<string>
+  /** Total unique keywords compiled. */
+  readonly size: number
+}
+
+/**
+ * Merge the general and strong keyword lists into one matcher: deduped,
+ * longest-first alternation with case-insensitive matching and word boundaries
+ * around short ASCII tokens.
+ */
+export function compileKeywords(
+  general: readonly string[],
+  strong: readonly string[],
+): CompiledKeywords {
+  const strongKeys = new Set(strong.map((k) => k.toLowerCase()))
+  const canonical = new Map<string, string>()
+  const parts: string[] = []
+  // Strong terms are also general keywords, so count them toward the hit total.
+  const all = [...new Set([...strong, ...general])].sort((a, b) => b.length - a.length)
+
+  for (const kw of all) {
+    const key = kw.toLowerCase()
+    if (canonical.has(key)) continue
+    canonical.set(key, kw)
+    const escaped = escapeRegExp(kw)
+    parts.push(SHORT_ASCII.test(kw) ? `\\b${escaped}\\b` : escaped)
+  }
+
+  return {
+    regex: new RegExp(parts.join('|'), 'gi'),
+    canonical,
+    strong: strongKeys,
+    size: canonical.size,
+  }
+}
 
 /**
  * Parse keyword lines: one term per line, `#` starts a comment, blank lines and

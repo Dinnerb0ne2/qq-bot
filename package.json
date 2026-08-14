@@ -14,7 +14,8 @@
     "dev": "NEWS_MANUAL_REFRESH=true tsx watch --disable-warning=ExperimentalWarning src/index.ts",
     "build": "tsc",
     "start": "node --disable-warning=ExperimentalWarning dist/index.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "test": "node --import tsx --test \"test/**/*.test.ts\""
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",

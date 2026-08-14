@@ -1,9 +1,12 @@
 /**
- * Ad regex-pattern baseline + parser/validator.
+ * Ad regex-pattern defaults + parser/validator.
  *
- * The built-in patterns below are always in effect; rules.ts unions them with
- * the `[patterns]` section of the remote rules file. This module is pure data +
- * parsing — the active state and loading live in rules.ts.
+ * The patterns below are the *fallback* defaults: settings.ts loads the active
+ * base patterns from config/ad.json (the single source of truth) and uses these
+ * only when the config file is missing or corrupt. rules.ts unions the active
+ * base with the `[patterns]` section of the remote rules file. This module is
+ * pure data + parsing — the active state and loading live in settings.ts /
+ * rules.ts.
  *
  * SECURITY: patterns run against every message and Node's RegExp has no
  * timeout, so a catastrophically-backtracking pattern (ReDoS) would hang the

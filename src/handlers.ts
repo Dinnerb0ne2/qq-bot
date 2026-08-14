@@ -1,6 +1,6 @@
 import { segment, type Bot, type GroupMessageEvent, type PrivateMessageEvent } from 'qq-official-bot'
 import { config } from './config'
-import { AntiAd, startAdRulesRefresh } from './ad'
+import { AntiAd, getAdConfig, startAdRulesRefresh } from './ad'
 import { formatNewsMarkdown } from './news/format'
 import { pushDailySummary } from './news/push'
 import { generateDailySummary, getStoredSummary, parseNewsDate } from './news/service'
@@ -13,7 +13,15 @@ import { startDailyNewsSummary } from './news/scheduler'
 export function registerHandlers(bot: Bot): void {
   const antiAd = new AntiAd(bot)
 
-  // Optionally augment the built-in ad keywords & patterns from a remote file.
+  const adConfig = getAdConfig()
+  bot.logger.info(
+    `[anti-ad] config from ${adConfig.source}: ${adConfig.keywords.length} keywords, ` +
+      `${adConfig.strongKeywords.length} strong, ${adConfig.patterns.length} patterns, ` +
+      `minHits=${adConfig.settings.minKeywordHits} threshold=${adConfig.settings.bayes.threshold}`,
+  )
+  for (const note of adConfig.notes) bot.logger.warn(`[anti-ad] ${note}`)
+
+  // Optionally augment the config-file ad keywords & patterns from a remote file.
   if (config.adRulesUrl) {
     startAdRulesRefresh({
       url: config.adRulesUrl,

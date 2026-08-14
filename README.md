@@ -10,11 +10,15 @@ over WebSocket and reacts to group, private (C2C), and guild message events.
 - **Group & private commands** — responds to group @-mentions and private (C2C)
   DMs; built-in commands are `ping`, `help`, and `news [YYYY-MM-DD]`.
 - **Automatic ad moderation** — screens group messages for Chinese spam via a
-  keyword baseline (≥ 2 distinct hits) plus regex patterns, recalls the message,
-  tracks per-member strikes, and alerts an admin at the limit.
-- **Live-editable rules** — ad keywords and patterns are unioned with a remote
-  text file (this repo's `docs/ad-rules.txt` by default) refreshed on a
-  schedule, so you retune a running bot by editing and pushing — no redeploy.
+  naive-Bayes keyword score (likelihood-weighted hits vs. a threshold, with
+  length-aware evidence: long messages weigh more, short ones less) plus regex
+  patterns, recalls the message, tracks per-member strikes, and alerts an admin
+  at the limit.
+- **Config-file rules** — forbidden words, intensity and the probability params
+  all live in one editable [`config/ad.json`](config/ad.json); ad keywords and
+  patterns are additionally unioned with a remote text file (this repo's
+  `docs/ad-rules.txt` by default) refreshed on a schedule, so you retune a
+  running bot by editing files and pushing — no redeploy.
 - **Daily AI news digest** — a scheduled job polls RSS/Atom feeds (resolved from
   a remote OPML), stores items in SQLite, and has an LLM (DeepSeek via an
   Anthropic-compatible endpoint) write one summary a day; the `news` command
@@ -34,8 +38,11 @@ src/
   index.ts     # entry point: creates the Bot, wires handlers, starts it
   config.ts    # loads & validates environment variables
   handlers.ts  # message handlers + a minimal command router
-  ad/          # ad moderation: keyword + regex detection, remote-rule refresh, strikes
+  ad/          # ad moderation: keyword + regex detection, config-file rules, remote-rule refresh, strikes
   news/        # daily AI news: feed fetch, SQLite storage, scheduler, LLM summarizer
+config/
+  ad.json      # ad moderation config: forbidden words, intensity, probability params
+test/          # unit tests (node:test), run with pnpm test
 ```
 
 ### Prerequisites
@@ -64,8 +71,8 @@ Configured in `.env` (see `.env.example` for the full annotated list):
 | `BOT_SANDBOX`              |          | `true` for the sandbox environment (default `false`)    |
 | `LOG_LEVEL`                |          | `trace`/`debug`/`info`/`warn`/`error` (default `info`)  |
 | `AD_STRIKE_LIMIT`          |          | Ad offenses by one member before an admin alert (default `3`) |
-| `AD_MIN_KEYWORD_HITS`      |          | Distinct ad keywords needed to flag a message (default `2`) |
-| `AD_RULES_URL`             |          | Remote rules file unioned with the built-in lists (default: this repo's `docs/ad-rules.txt`; empty to disable) |
+| `AD_CONFIG_PATH`           |          | Path to `config/ad.json` — forbidden words, intensity and probability params (default `config/ad.json`) |
+| `AD_RULES_URL`             |          | Remote rules file unioned on top of the config-file lists (default: this repo's `docs/ad-rules.txt`; empty to disable) |
 | `AD_RULES_REFRESH_MINUTES` |          | Refresh interval for the remote rules file, in minutes (default `360`) |
 | `NEWS_LLM_API_KEY`         |          | Summarizer LLM key (falls back to `DEEPSEEK_API_KEY`; unset disables the daily job) |
 | `NEWS_LLM_BASE_URL`        |          | Anthropic-compatible endpoint (default `https://api.deepseek.com/anthropic`) |
@@ -173,9 +180,71 @@ Group messages are screened for advertising (`src/ad/`). On a flag, the bot
 memory), and on reaching `AD_STRIKE_LIMIT` (default `3`) **replies once** asking
 an admin to remove the member.
 
-Detection combines two signals — **keywords** (flag on ≥ `AD_MIN_KEYWORD_HITS`
-distinct hits) and **regex patterns** (flag on a single match). Each has a
-built-in baseline (`src/ad/`) unioned with a remote rules file, refreshed every
+Detection combines two signals — **keywords** scored with a naive-Bayes model,
+and **regex patterns** (flag on a single match). Keyword hits are precompiled
+into one case-insensitive matcher; every distinct hit is evidence weighted by a
+likelihood ratio (strong terms weigh far more than generic ones) and combined
+with a prior base rate:
+
+```
+P(ad | text) ≥ threshold  ⇒  flag
+```
+
+Length evidence is calibrated to the group's **chat habit** — modern chat
+messages are short, so suspicion grows continuously from the shortest messages
+onward (`lengthLr·ln(1 + len/chatLength)`, capped at the modest `maxLengthLr`):
+no fixed 30-char cliff, and no amount of length can ever flag a message on its
+own. **No single indicator decides** — a flag requires ad features to co-occur:
+the message must meet the distinct-hit floor AND carry a strong keyword (or a
+per-keyword LR override) or a suspicious URL. So a pile of generic words
+(`客服 咨询 QQ …`), a lone keyword buried in a 500-char post, or a bare link is
+never an ad on its own; the indicators only push each other.
+
+Ads almost always carry a **URL — but to a domain that is neither an official
+site nor a major platform**. URLs on the `safeUrlDomains` whitelist (jd.com,
+bilibili.com, gov.cn, …) are normal sharing — a member recommending a product
+page — and add nothing. A non-whitelisted URL adds `ln(suspiciousUrlLr)` to the
+log-odds, and if it also sits on a spam-prone TLD (`.top`, `.xyz`, `.icu`,
+`.cc`, …; `suspiciousTlds`) a further small `ln(suspiciousTldLr)`. A short
+recommendation with a link and a couple of generic words still passes; the same
+words in a long message with a sketchy link flags. Keywords repeated many times
+are *discounted* (`repeatDiminish^(count-1)`) — repeating one sensitive word is
+attention-seeking, and a real ad wouldn't be that low-effort — while packing
+several *different* ad keywords still flags, and generic hits have diminishing
+returns (`weakDiminish`).
+
+All of this — the forbidden words, their intensity and the probability params —
+lives in one config file, [`config/ad.json`](config/ad.json), the single source
+of truth. Edit it at runtime, no source changes needed:
+
+```jsonc
+{
+  "prior": 0.02,              // prior P(ad) of an arbitrary message
+  "threshold": 0.6,           // P(ad|text) at which a message is flagged
+  "strongLr": 40,             // likelihood ratio of a strong keyword hit
+  "weakLr": 2.5,              // likelihood ratio of a generic keyword hit
+  "lengthLr": 0.35,           // length-evidence growth per ln(1 + len/chatLength)
+  "chatLength": 10,           // reference chat-message length: dampening ends here, length evidence grows beyond
+  "maxLengthLr": 0.5,         // cap on the length-evidence term — length can tip, never decide
+  "shortKeywordFactor": 0.5,  // keyword-evidence multiplier for the shortest messages
+  "repeatDiminish": 0.7,      // a keyword repeated count times weighs 0.7^(count-1) (刷屏 ≠ 广告)
+  "weakDiminish": 1.5,        // n-th distinct generic hit weighs min(1, 1.5/n)
+  "suspiciousUrlLr": 8,       // LR of a URL outside the safe whitelist
+  "suspiciousTldLr": 2,       // extra LR when that URL uses a spam-prone TLD (.top/.xyz/.icu…)
+  "minKeywordHits": 2,        // distinct-hit floor before the keyword path runs
+  "safeUrlDomains": ["jd.com", "bilibili.com", "gov.cn"],  // official/major platforms: URL adds nothing
+  "suspiciousTlds": ["top", "xyz", "icu", "cc"],           // spam-prone TLDs: slightly more doubt
+  "keywords": ["促销", "代购"],
+  "strongKeywords": ["加V", "扫码"],
+  "keywordLrs": { "刷单": 100, "押题": 80 },  // per-keyword intensity (违禁强度)
+  "patterns": ["/加[V微]信?\\s*\\w+/"]
+}
+```
+
+A missing or corrupt file (or an invalid field) falls back to the bundled
+defaults in `src/ad/`, and the bot logs what it dropped at startup. Override the
+path with `AD_CONFIG_PATH`. On top of the config file, one remote rules file is
+still unioned as an optional live-update layer, refreshed every
 `AD_RULES_REFRESH_MINUTES`. By default that file is this repo's own
 [`docs/ad-rules.txt`](docs/ad-rules.txt):
 
@@ -184,6 +253,10 @@ built-in baseline (`src/ad/`) unioned with a remote rules file, refreshed every
 促销
 代购
 
+[strong]
+加V
+扫码
+
 [patterns]
 拉[你您]进[群裙]
 /加\s*薇\s*[:：]?\s*[a-z0-9_-]{4,20}/i
@@ -191,15 +264,17 @@ built-in baseline (`src/ad/`) unioned with a remote rules file, refreshed every
 
 Edit `docs/ad-rules.txt` and push to retune a running bot on its next refresh;
 override the source with `AD_RULES_URL`, or set it empty to disable remote rules.
-A fetch failure leaves the built-in lists (plus the last good file) in effect, so
-detection never drops below the bundled baselines.
+A fetch failure leaves the config-file lists (plus the last good file) in
+effect, so detection never drops below the configured baseline.
 
 The keyword seed derives from the MIT-licensed
 [`konsheng/Sensitive-lexicon`](https://github.com/konsheng/Sensitive-lexicon)
-and includes generic terms, so raise `AD_MIN_KEYWORD_HITS` or prune if you see
-false positives. Patterns are one regex per line (bare source, or
-`/source/flags`) and validated at load — invalid, over-long, or catastrophically
-slow ones are skipped and logged, and stateful `g`/`y` flags are dropped.
+and includes generic terms. Because of the likelihood weighting these no longer
+false-flag on their own; to tune, raise `threshold` / `minKeywordHits` for fewer
+flags or lower them for more, or move a term out of `strongKeywords`. Patterns
+are one regex per line (bare source, or `/source/flags`) and validated at load —
+invalid, over-long, or catastrophically slow ones are skipped and logged, and
+stateful `g`/`y` flags are dropped.
 
 > **QQ official-API limits:** the group API **cannot mute or kick**, so removal
 > stays a manual admin action (the bot only alerts); a public-domain bot only

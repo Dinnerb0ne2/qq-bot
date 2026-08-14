@@ -37,6 +37,11 @@ ENV NODE_ENV=production
 # package.json is copied so its "main" field and CommonJS "type" sit next to
 # dist/; node reads it when resolving the entry.
 COPY --chown=node:node package.json ./
+# Ad moderation config (forbidden words / intensity / probability params) —
+# the runtime single source of truth, read from config/ad.json at startup.
+# To retune a running container, override AD_CONFIG_PATH or mount your own file
+# over /app/config/ad.json.
+COPY --chown=node:node config ./config
 COPY --from=prod-deps --chown=node:node /app/node_modules ./node_modules
 COPY --from=builder --chown=node:node /app/dist ./dist
 # Writable home for the news SQLite database (NEWS_DB_PATH, default data/news.db).
