@@ -242,10 +242,37 @@ describe('detectViolation (driven by config/ad.json)', () => {
     assert.equal(promo!.category, '广告')
   })
 
+  it('a category tie resolves in config order (赌博 before 诈骗兼职), not keyword order', () => {
+    // 菠菜(赌博) + 刷单(诈骗兼职) + 联系(广告) is a 1-1-1 tie on distinct hits;
+    // the winning category must follow the categories block order, 广告 last.
+    const hit = detectViolation('菠菜 刷单 联系我', settings)
+    assert.ok(hit, 'tie message should flag')
+    assert.equal(hit!.category, '赌博')
+  })
+
   it('chat tone is detected and dampens soft evidence', () => {
     const a = analyzeViolation('哈哈 加我私聊 优惠 先到先得', settings)
     assert.equal(a.features.chat, true, 'CHAT_RE should fire on 哈哈')
     assert.ok(a.dampeningFactor < 1, 'chat tone should dampen the soft evidence')
+  })
+
+  it('chat markers inside a URL do NOT trigger chat dampening', () => {
+    // hh/mark are chat markers, but inside a hostname they are just URL chars:
+    // the marker must be bounded by whitespace/punctuation to count as chit-chat.
+    assert.equal(analyzeViolation('看看 http://hh.com 的效果', settings).features.chat, false)
+    assert.equal(analyzeViolation('这个 https://markup.io 不错', settings).features.chat, false)
+    assert.equal(analyzeViolation('bookmark.com 这个书签工具好用', settings).features.chat, false)
+    // Punct-boundary chit-chat still fires: 哈哈 preceded by ，
+    assert.equal(analyzeViolation('我服了，哈哈', settings).features.chat, true)
+  })
+
+  it('reusing the shared matcher regex does not leak lastIndex between messages', () => {
+    // The detector scans with the cached matcher regex directly (no clone);
+    // lastIndex must be reset so a later message always restarts from the top.
+    detectViolation('今天天气不错', settings)
+    detectViolation('菠菜 上分 联系我', settings)
+    detectViolation('哈哈 加我私聊 优惠 先到先得', settings)
+    assert.equal(getViolationKeywordMatcher().regex.lastIndex, 0)
   })
 
   it('the broadened question/collab tone still dampens (no regression)', () => {

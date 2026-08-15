@@ -175,7 +175,9 @@ export function detectViolation(
   settings: ModerationSettings = getModerationSettings(),
   context?: ModerationContext,
 ): ViolationMatch | null {
-  if (!text) return null
+  // Empty or whitespace-only text cannot be a violation; skip the whole
+  // analysis pipeline (features, keyword scan, URL scan).
+  if (!text || /^\s*$/.test(text)) return null
   const a = analyzeViolation(text, settings, context)
   if (a.trigger === 'pattern') {
     return {
@@ -243,10 +245,16 @@ export function analyzeViolation(
   // occurrences per distinct keyword (repetition is evidence), then score the
   // hits with the naive-Bayes model.
   const matcher = getViolationKeywordMatcher()
-  // Clone the shared regex: exec() advances lastIndex, and the cached one is
-  // global — mutating it would corrupt matching for other callers.
-  const re = new RegExp(matcher.regex.source, matcher.regex.flags)
-  const hits = new Map<string, { count: number; strong: boolean; variant: boolean }>()
+  // The compiled matcher regex is shared and global: exec() advances lastIndex.
+  // Detection is fully synchronous and this module is its only exec() caller,
+  // so resetting lastIndex lets us reuse the cached regex instead of cloning it
+  // per message (~0.5µs of the hot path); the trailing reset keeps it clean for
+  // any future caller.
+  const re = matcher.regex
+  re.lastIndex = 0
+  // Allocated lazily: the common case (benign chat) has zero keyword hits, so
+  // the Map is only created when the first hit lands.
+  let hits: Map<string, { count: number; strong: boolean; variant: boolean }> | null = null
   let m: RegExpExecArray | null
   while ((m = re.exec(text)) !== null) {
     if (m[0].length === 0) {
@@ -254,32 +262,35 @@ export function analyzeViolation(
       continue
     }
     const key = m[0].toLowerCase()
+    if (!hits) hits = new Map()
     const rec = hits.get(key)
     if (rec) rec.count++
     else hits.set(key, { count: 1, strong: matcher.strong.has(key), variant: matcher.variants.has(key) })
   }
+  re.lastIndex = 0
 
   const urls = classifyUrls(text, settings.safeUrlDomains, settings.suspiciousTlds)
   const suspiciousUrl = urls.some((u) => !u.benign)
   const suspiciousTld = urls.some((u) => u.suspiciousTld)
 
   // Score the hits the same way bayes.violationLogOdds does, but record each step.
-  const keywordHits = hits.size
+  const keywordHits = hits?.size ?? 0
   let hardKeyword = false
   let keywordLogOdds = 0
   let variantHits = 0
   let shortScale = 1
   let lengthLogOdds = 0
   const detail: ViolationKeywordDetail[] = []
-  const categoryEvidence: Record<string, number> = {}
+  let categoryEvidence: Readonly<Record<string, number>> = {}
 
   const scored = keywordHits >= settings.minKeywordHits || hasStructure
   if (scored) {
     const modHits: (ModerationHit & { key: string; canonical: string; variant: boolean })[] = []
-    for (const [key, rec] of hits) {
+    const catEvidence: Record<string, number> = {}
+    if (hits) for (const [key, rec] of hits) {
       const canonical = matcher.canonical.get(key) ?? key
       const category = matcher.category.get(key) ?? DEFAULT_CATEGORY
-      categoryEvidence[category] = (categoryEvidence[category] ?? 0) + 1
+      catEvidence[category] = (catEvidence[category] ?? 0) + 1
       modHits.push({
         key,
         canonical,
@@ -291,6 +302,7 @@ export function analyzeViolation(
         lr: settings.keywordLrs.get(canonical),
       })
     }
+    categoryEvidence = catEvidence
     hardKeyword = modHits.some((h) => h.strong || h.lr !== undefined)
     variantHits = modHits.filter((h) => h.variant).length
 

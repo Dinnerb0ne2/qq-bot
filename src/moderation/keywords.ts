@@ -146,12 +146,8 @@ export function compileCategoryLists(
       const kw = obj && typeof obj === 'object' ? (obj as Record<string, unknown>) : {}
       const list = Array.isArray(kw.keywords) ? kw.keywords : []
       const strongList = Array.isArray(kw.strongKeywords) ? kw.strongKeywords : []
-      if (!list.length && !strongList.length) continue
-      categories.push(c)
-      keywords[c] = parseKeywordList(list.join('\n'))
-      strong[c] = parseKeywordList(strongList.join('\n'))
+      const forms: Record<string, string[]> = {}
       if (kw.variantKeywords && typeof kw.variantKeywords === 'object') {
-        const forms: Record<string, string[]> = {}
         for (const [canon, fs] of Object.entries(
           kw.variantKeywords as Record<string, unknown>,
         )) {
@@ -160,8 +156,15 @@ export function compileCategoryLists(
           )
           if (parsed.length) forms[canon] = parsed
         }
-        if (Object.keys(forms).length) variants[c] = forms
       }
+      // A category is kept when it carries keywords, strong keywords, or variant
+      // forms (variants are still active detection terms — dropping them here
+      // would silently lose coverage).
+      if (!list.length && !strongList.length && Object.keys(forms).length === 0) continue
+      categories.push(c)
+      keywords[c] = parseKeywordList(list.join('\n'))
+      strong[c] = parseKeywordList(strongList.join('\n'))
+      if (Object.keys(forms).length) variants[c] = forms
     }
   }
   if (!categories.includes(defaultCategory)) categories.push(defaultCategory)
@@ -249,7 +252,13 @@ export function compileKeywords(
     parts.push(SHORT_ASCII.test(kw) ? `\\b${escaped}\\b` : escaped)
   }
 
-  const categoryTags = [...new Set(category.values())]
+  // Category tie-break order: config order first (the `categories` map is
+  // inserted in config order, 广告 last), then any category that only appeared
+  // via a keyword, then the 广告 fallback last of all.
+  const categoryTags = [...new Set(categories?.values() ?? [])]
+  for (const c of category.values()) {
+    if (!categoryTags.includes(c)) categoryTags.push(c)
+  }
   if (!categoryTags.includes(DEFAULT_CATEGORY)) categoryTags.push(DEFAULT_CATEGORY)
 
   return {

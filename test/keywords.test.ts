@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { compileKeywords, parseKeywordList, parseVariantForms } from '../src/moderation/keywords'
+import { compileKeywords, compileCategoryLists, parseKeywordList, parseVariantForms } from '../src/moderation/keywords'
 
 /** The compiled matcher regex is global (stateful lastIndex) — clone it per
  *  check, exactly like the detector does, so assertions are independent. */
@@ -82,6 +82,23 @@ describe('compileKeywords', () => {
     const { variants } = compileKeywords(['扣扣'], [], { QQ: ['扣扣'] })
     assert.equal(variants.get('扣扣'), 'QQ')
   })
+
+  it('orders category tags by config map order with 广告 last (tie-break)', () => {
+    // The config map is inserted in config order (赌博…色情, 广告 last); the
+    // matcher must expose the same order so category ties resolve predictably.
+    const categoryMap = new Map<string, string>([
+      ['菠菜', '赌博'],
+      ['冰毒', '毒品'],
+      ['刷单', '诈骗兼职'],
+      ['约炮', '色情'],
+      ['微信', '广告'],
+    ])
+    const { categories } = compileKeywords(
+      ['微信', '菠菜', '冰毒', '刷单', '约炮'], [],
+      undefined, categoryMap,
+    )
+    assert.deepEqual(categories, ['赌博', '毒品', '诈骗兼职', '色情', '广告'])
+  })
 })
 
 describe('parseKeywordList', () => {
@@ -100,5 +117,27 @@ describe('parseVariantForms', () => {
   it('trims, dedupes and drops out-of-range forms', () => {
     assert.deepEqual(parseVariantForms([' 薇信 ', '薇信', '薇', 'x'.repeat(65)]), ['薇信'])
     assert.deepEqual(parseVariantForms(['扣扣', '秋秋']), ['扣扣', '秋秋'])
+  })
+})
+
+describe('compileCategoryLists', () => {
+  it('keeps a category that carries only variant forms (variants are active terms)', () => {
+    const lists = compileCategoryLists({ 色情: { variantKeywords: { 约炮: ['约P'] } } })
+    assert.deepEqual(lists.categories, ['色情', '广告'])
+    assert.deepEqual(lists.variants.色情, { 约炮: ['约P'] })
+  })
+
+  it('drops empty categories but always appends the 广告 fallback last', () => {
+    const lists = compileCategoryLists({ 赌博: {}, 空: { keywords: [] } })
+    assert.deepEqual(lists.categories, ['广告'])
+  })
+
+  it('parses keywords, strong keywords and variants per category', () => {
+    const lists = compileCategoryLists({
+      赌博: { strongKeywords: ['博彩'], keywords: ['上分'], variantKeywords: { 博彩: ['菠菜'] } },
+    })
+    assert.deepEqual(lists.keywords.赌博, ['上分'])
+    assert.deepEqual(lists.strong.赌博, ['博彩'])
+    assert.deepEqual(lists.variants.赌博, { 博彩: ['菠菜'] })
   })
 })

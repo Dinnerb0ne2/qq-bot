@@ -62,6 +62,33 @@ const BARE_HOST_TOKEN_RE = /^((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,})(?
 /** Punctuation commonly attached to a URL at the end of a sentence. */
 const TRAILING_URL_PUNCTUATION_RE = /[.,!?;:，。！？；：、…）》】〕」』”’]+$/u
 
+/** Memoized lowercase Sets, keyed by the *config array reference*. classifyUrls
+ *  runs on every message and used to rebuild these Sets per call (~100 entries
+ *  ≈ 10µs); the config arrays are long-lived singletons, so the Set is built
+ *  once and reused for the bot's lifetime (a reload builds a fresh array → a
+ *  fresh Set, still correct). */
+const safeDomainSets = new WeakMap<readonly string[], ReadonlySet<string>>()
+const suspiciousTldSets = new WeakMap<readonly string[], ReadonlySet<string>>()
+
+/** Lowercase + dedupe a list into a Set, memoized per input array. */
+function loweredSet(
+  list: readonly string[],
+  cache: WeakMap<readonly string[], ReadonlySet<string>>,
+  stripLeadingDot = false,
+): ReadonlySet<string> {
+  let set = cache.get(list)
+  if (!set) {
+    set = new Set(
+      list.map((s) => {
+        const v = s.toLowerCase()
+        return stripLeadingDot ? v.replace(/^\./, '') : v
+      }),
+    )
+    cache.set(list, set)
+  }
+  return set
+}
+
 /** Extract the host of a URL token (drops scheme, port and path). */
 function hostOf(url: string): string {
   const scheme = /^https?:\/\/([^\/:?#\s]+)/i.exec(url)
@@ -75,24 +102,33 @@ function hostOf(url: string): string {
 /**
  * Extract all URLs in `text` (scheme'd URLs and bare domains), lowercased.
  * Scheme'd spans are masked out before the bare-host scan so the domain inside
- * `https://example.com/x` isn't reported twice.
+ * `https://example.com/x` isn't reported twice. Fast path: when there are no
+ * scheme'd URLs (the common case) the bare-host scan runs on the raw text and
+ * skips the per-char masking array.
  */
 export function extractUrls(text: string): string[] {
   const out = new Set<string>()
-  const masked = text.split('')
+  const spans: Array<[number, number]> = []
   URL_RE.lastIndex = 0
   let m: RegExpExecArray | null
   while ((m = URL_RE.exec(text)) !== null) {
-    const url = m[0].replace(TRAILING_URL_PUNCTUATION_RE, '').toLowerCase()
-    if (url) out.add(url)
     if (m[0].length === 0) {
       URL_RE.lastIndex++
       continue
     }
-    for (let i = m.index; i < m.index + m[0].length; i++) masked[i] = ' '
+    const url = m[0].replace(TRAILING_URL_PUNCTUATION_RE, '').toLowerCase()
+    if (url) out.add(url)
+    spans.push([m.index, m.index + m[0].length])
   }
+  const source = spans.length === 0 ? text : (() => {
+    const masked = text.split('')
+    for (const [start, end] of spans) {
+      for (let i = start; i < end; i++) masked[i] = ' '
+    }
+    return masked.join('')
+  })()
   BARE_HOST_RE.lastIndex = 0
-  while ((m = BARE_HOST_RE.exec(masked.join(''))) !== null) {
+  while ((m = BARE_HOST_RE.exec(source)) !== null) {
     out.add(m[1].toLowerCase())
   }
   return [...out]
@@ -150,8 +186,8 @@ export function classifyUrls(
   safeDomains: readonly string[],
   suspiciousTlds: readonly string[],
 ): UrlEvidence[] {
-  const safe = new Set(safeDomains.map((d) => d.toLowerCase()))
-  const tlds = new Set(suspiciousTlds.map((t) => t.toLowerCase().replace(/^\./, '')))
+  const safe = loweredSet(safeDomains, safeDomainSets)
+  const tlds = loweredSet(suspiciousTlds, suspiciousTldSets, true)
   const out: UrlEvidence[] = []
   for (const url of extractUrls(text)) {
     const host = hostOf(url)

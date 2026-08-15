@@ -32,9 +32,11 @@ export const COLLAB_RE =
 /** Casual chit-chat markers — colloquial fillers an ad never uses (a "快来抢吧"
  *  single trailing 吧/哈 is *not* one; ads write that). When present the soft
  *  keyword/contact evidence is dampened by `bayes.chatFactor`. Matches a marker
- *  either as the whole message, or bounded by whitespace/punctuation. */
+ *  either as the whole message, or bounded on both sides by whitespace /
+ *  punctuation — the leading boundary keeps `mark`/`hh` inside hostnames
+ *  (https://markup.com, bookmark.com, hh.com) from reading as chit-chat. */
 export const CHAT_RE =
-  /^[哈嗯哦噢嘿嘿]{1,5}[\s~～。.!！，,]*$|(哈哈哈+|哈哈|嘿嘿|hhh|hh|笑死|好家伙|厉害了|太强了|学到了|原来如此|顶一个|顶一下|mark|马克|不错不错|妙啊|真不错|可以的|牛的|收到收到|好的好的)(?=[\s，,。.!！~～]|$)/
+  /^[哈嗯哦噢嘿嘿]{1,5}[\s~～。.!！，,]*$|(?<=^|[\s（(，,。.!！?？~～])(哈哈哈+|哈哈|嘿嘿|hhh|hh|笑死|好家伙|厉害了|太强了|学到了|原来如此|顶一个|顶一下|mark|马克|不错不错|妙啊|真不错|可以的|牛的|收到收到|好的好的)(?=[\s，,。.!！?？~～）)]|$)/
 
 /** Promo/urgency/job/selling words — the *pitch* half of a pitch+contact ad
  *  (团购/优惠券/先到先得 on one side, 兼职/日薪/出售 on the other). These are
