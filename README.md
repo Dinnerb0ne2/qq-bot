@@ -9,14 +9,15 @@ over WebSocket and reacts to group, private (C2C), and guild message events.
 
 - **Group & private commands** — responds to group @-mentions and private (C2C)
   DMs; built-in commands are `ping`, `help`, and `news [YYYY-MM-DD]`.
-- **Automatic ad moderation** — screens group messages for Chinese spam via a
-  naive-Bayes keyword score (likelihood-weighted hits vs. a threshold, with
-  length-aware evidence: long messages weigh more, short ones less) plus regex
-  patterns, recalls the message, tracks per-member strikes, and alerts an admin
-  at the limit.
+- **Automatic forbidden-word (违禁词) moderation** — screens group messages for
+  ads, gambling, drug, scam-job and porn pitches via a naive-Bayes keyword score
+  (likelihood-weighted hits vs. a threshold, with length-aware evidence: long
+  messages weigh more, short ones less) plus regex patterns, recalls the message,
+  tracks per-member strikes, and alerts an admin at the limit. Every flagged
+  message reports its **violation category** (广告/赌博/毒品/诈骗兼职/色情).
 - **Config-file rules** — forbidden words, intensity and the probability params
-  all live in one editable [`config/ad.json`](config/ad.json); ad keywords and
-  patterns are additionally unioned with a remote text file (this repo's
+  all live in one editable [`config/ad.json`](config/ad.json); forbidden words
+  and patterns are additionally unioned with a remote text file (this repo's
   `docs/ad-rules.txt` by default) refreshed on a schedule, so you retune a
   running bot by editing files and pushing — no redeploy.
 - **Daily AI news digest** — a scheduled job polls RSS/Atom feeds (resolved from
@@ -38,10 +39,10 @@ src/
   index.ts     # entry point: creates the Bot, wires handlers, starts it
   config.ts    # loads & validates environment variables
   handlers.ts  # message handlers + a minimal command router
-  ad/          # ad moderation: keyword + regex detection, config-file rules, remote-rule refresh, strikes
+  moderation/  # forbidden-word moderation: keyword + regex detection, categories, config-file rules, remote-rule refresh, strikes
   news/        # daily AI news: feed fetch, SQLite storage, scheduler, LLM summarizer
 config/
-  ad.json      # ad moderation config: forbidden words, intensity, probability params
+  ad.json      # forbidden-word config: category lists, forbidden words, intensity, probability params
 test/          # unit tests (node:test), run with pnpm test
 ```
 
@@ -173,12 +174,13 @@ replies with the fresh summary; it's disabled in production (scheduled-only, via
 `NEWS_MANUAL_REFRESH`). A dev refresh never triggers a group push — only the
 scheduled job (and its startup catch-up) delivers to groups.
 
-## Ad moderation
+## Forbidden-word moderation
 
-Group messages are screened for advertising (`src/ad/`). On a flag, the bot
-**recalls** the message, adds a **strike** against the sender (per group, in
-memory), and on reaching `AD_STRIKE_LIMIT` (default `3`) **replies once** asking
-an admin to remove the member.
+Group messages are screened for violations — ads, gambling, drugs, scam jobs,
+pornography (`src/moderation/`). On a flag, the bot **recalls** the message,
+adds a **strike** against the sender (per group, in memory), and on reaching
+`AD_STRIKE_LIMIT` (default `3`) **replies once** asking an admin to remove the
+member.
 
 Detection combines two signals — **keywords** scored with a naive-Bayes model,
 and **regex patterns** (flag on a single match). Keyword hits are precompiled
@@ -187,18 +189,24 @@ likelihood ratio (strong terms weigh far more than generic ones) and combined
 with a prior base rate:
 
 ```
-P(ad | text) ≥ threshold  ⇒  flag
+P(violation | text) ≥ threshold  ⇒  flag
 ```
+
+Every keyword carries a **violation category** (`categories` in config/ad.json —
+赌博/毒品/诈骗兼职/色情; uncategorized words, including remote additions, are
+广告). The winning category — the one with the most distinct keyword hits — is
+reported in the bot's log line and the `ad-test` tool, so you can tell a gambling
+pitch from a course promo at a glance.
 
 Length evidence is calibrated to the group's **chat habit** — modern chat
 messages are short, so suspicion grows continuously from the shortest messages
 onward (`lengthLr·ln(1 + len/chatLength)`, capped at the modest `maxLengthLr`):
 no fixed 30-char cliff, and no amount of length can ever flag a message on its
-own. **No single indicator decides** — a flag requires ad features to co-occur:
-the message must meet the distinct-hit floor AND carry a strong keyword (or a
-per-keyword LR override) or a suspicious URL. So a pile of generic words
-(`客服 咨询 QQ …`), a lone keyword buried in a 500-char post, or a bare link is
-never an ad on its own; the indicators only push each other.
+own. **No single indicator decides** — a flag requires violation features to
+co-occur: the message must meet the distinct-hit floor AND carry a strong
+keyword (or a per-keyword LR override) or a suspicious URL. So a pile of generic
+words (`客服 咨询 QQ …`), a lone keyword buried in a 500-char post, or a bare
+link is never a violation on its own; the indicators only push each other.
 
 Ads almost always carry a **URL — but to a domain that is neither an official
 site nor a major platform**. URLs on the `safeUrlDomains` whitelist (jd.com,
@@ -211,7 +219,11 @@ words in a long message with a sketchy link flags. Keywords repeated many times
 are *discounted* (`repeatDiminish^(count-1)`) — repeating one sensitive word is
 attention-seeking, and a real ad wouldn't be that low-effort — while packing
 several *different* ad keywords still flags, and generic hits have diminishing
-returns (`weakDiminish`).
+returns (`weakDiminish`). Conversational tone matters too: a message that reads
+as a **question, a reply, a collaboration request, or casual chit-chat**
+(哈哈/学到了/顶一个) has its soft keyword + contact evidence dampened
+(`questionFactor`/`replyFactor`/`collabFactor`/`chatFactor`), because that is
+how a group actually talks.
 
 All of this — the forbidden words, their intensity and the probability params —
 lives in one config file, [`config/ad.json`](config/ad.json), the single source
@@ -219,8 +231,8 @@ of truth. Edit it at runtime, no source changes needed:
 
 ```jsonc
 {
-  "prior": 0.02,              // prior P(ad) of an arbitrary message
-  "threshold": 0.6,           // P(ad|text) at which a message is flagged
+  "prior": 0.02,              // prior P(violation) of an arbitrary message
+  "threshold": 0.6,           // P(violation|text) at which a message is flagged
   "strongLr": 40,             // likelihood ratio of a strong keyword hit
   "weakLr": 2.5,              // likelihood ratio of a generic keyword hit
   "variantLr": 2,             // 变种词权重: a matched variant word is a strong hit, × this
@@ -235,10 +247,20 @@ of truth. Edit it at runtime, no source changes needed:
   "minKeywordHits": 2,        // distinct-hit floor before the keyword path runs
   "safeUrlDomains": ["jd.com", "bilibili.com", "gov.cn"],  // official/major platforms: URL adds nothing
   "suspiciousTlds": ["top", "xyz", "icu", "cc"],           // spam-prone TLDs: slightly more doubt
+  "questionFactor": 0.55,     // dampener when the message reads as a question (提问语气)
+  "replyFactor": 0.6,         // dampener when the message is a reply/quote of an earlier message
+  "collabFactor": 0.7,        // dampener when the message asks for help/partnership (协作/求助)
+  "chatFactor": 0.75,         // dampener when the message is casual chit-chat (闲聊语气)
   "keywords": ["促销", "代购"],
   "strongKeywords": ["加V", "扫码"],
   "keywordLrs": { "刷单": 100, "押题": 80 },  // per-keyword intensity (违禁强度)
   "variantKeywords": { "微信": ["薇信", "威信"], "QQ": ["扣扣"] },  // 变种词
+  "categories": {                       // 违禁类别: tagged pools reported as the winning category
+    "赌博":   { "strongKeywords": ["博彩", "棋牌"], "keywords": ["上分", "盘口"] },
+    "毒品":   { "strongKeywords": ["冰毒", "K粉"],   "keywords": ["飞行员", "溜冰"] },
+    "诈骗兼职": { "strongKeywords": ["刷单", "贷款"],  "keywords": ["兼职", "网赚"] },
+    "色情":   { "strongKeywords": ["约炮"] }
+  },
   "patterns": ["/加[V微]信?\\s*\\w+/"]
 }
 ```
@@ -249,10 +271,17 @@ of truth. Edit it at runtime, no source changes needed:
 also add them via a `[variants]` section (`微信=薇信|威信`). A matched variant is
 scored as a **strong hit of its canonical keyword** (so `keywordLrs`/strong-class
 LRs carry over — `菠菜` inherits `博彩`'s weight) multiplied by the
-`variantLr` weight: deliberately hiding a hook is itself ad evidence.
+`variantLr` weight: deliberately hiding a hook is itself violation evidence.
+
+**Violation categories (违禁类别).** The optional `categories` block groups
+keywords by what they advertise (赌博/毒品/诈骗兼职/色情). Tagged words stay
+active for detection like the top-level lists — their only extra job is
+labelling: the winning category (most distinct hits) is shown by `ad-test` and
+in the bot's `[moderation]` log line, so an operator sees *what* the message was,
+not just that it was flagged.
 
 A missing or corrupt file (or an invalid field) falls back to the bundled
-defaults in `src/ad/`, and the bot logs what it dropped at startup. Override the
+defaults in `src/moderation/`, and the bot logs what it dropped at startup. Override the
 path with `AD_CONFIG_PATH`. On top of the config file, one remote rules file is
 still unioned as an optional live-update layer, refreshed every
 `AD_RULES_REFRESH_MINUTES`. By default that file is this repo's own

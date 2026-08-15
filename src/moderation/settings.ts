@@ -1,5 +1,5 @@
 /**
- * Ad config: loads the forbidden-word lists (违禁词 / 违禁强度) and the
+ * Violation config: loads the forbidden-word lists (违禁词 / 违禁强度) and the
  * statistical probability params from one JSON config file (config/ad.json by
  * default), so they can be tuned without touching source code.
  *
@@ -13,21 +13,31 @@
 
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import { DEFAULT_AD_BAYES, type AdBayesParams } from './bayes'
-import { BUILTIN_AD_KEYWORDS, BUILTIN_STRONG_AD_KEYWORDS, parseKeywordList, parseVariantForms, BUILTIN_VARIANT_KEYWORDS } from './keywords'
-import { BUILTIN_AD_PATTERNS, BUILTIN_CONTACT_AD_PATTERNS, parsePatternList } from './patterns'
+import { DEFAULT_MODERATION_BAYES, type ModerationBayesParams } from './bayes'
+import {
+  BUILTIN_VIOLATION_KEYWORDS,
+  BUILTIN_STRONG_VIOLATION_KEYWORDS,
+  parseKeywordList,
+  parseVariantForms,
+  BUILTIN_VARIANT_KEYWORDS,
+  compileCategoryLists,
+  DEFAULT_CATEGORY,
+  EMPTY_CATEGORY_LISTS,
+  type CategoryLists,
+} from './keywords'
+import { BUILTIN_VIOLATION_PATTERNS, BUILTIN_CONTACT_VIOLATION_PATTERNS, parsePatternList } from './patterns'
 import { DEFAULT_SAFE_URL_DOMAINS, DEFAULT_SUSPICIOUS_TLDS } from './urls'
 
 /** Combined tunable settings the detector/moderator read on every message. */
-export interface AdSettings {
+export interface ModerationSettings {
   /** Minimum distinct keyword hits to even consider the keyword path. */
   minKeywordHits: number
   /** Naive-Bayes prior/threshold/likelihood-ratio parameters. */
-  bayes: AdBayesParams
+  bayes: ModerationBayesParams
   /** Per-keyword likelihood-ratio overrides (违禁强度), by canonical keyword. */
   keywordLrs: ReadonlyMap<string, number>
   /** Domains (registrable, e.g. `jd.com`) treated as benign sharing; URLs on
-   *  these never count as ad evidence. */
+   *  these never count as violation evidence. */
   safeUrlDomains: readonly string[]
   /** Spam-prone TLDs (`.top`, `.xyz`, …); a non-whitelisted URL on one of
    *  these adds a little extra evidence. */
@@ -35,23 +45,30 @@ export interface AdSettings {
 }
 
 /** Fully resolved config: the keyword lists plus the probability settings. */
-export interface LoadedAdConfig {
+export interface LoadedModerationConfig {
   keywords: string[]
   strongKeywords: string[]
   /** Deliberate variant words (变种词): canonical keyword → [variant forms]. */
   variantKeywords: Record<string, string[]>
+  /** Keyword lists grouped by violation category (赌博/毒品/诈骗兼职/色情/广告). */
+  categories: CategoryLists
+  /** Lowercase keyword → violation category tag (广告 fallback for the rest). */
+  categoryMap: ReadonlyMap<string, string>
   patterns: RegExp[]
   contactPatterns: RegExp[]
-  settings: AdSettings
+  settings: ModerationSettings
   /** `file` when config/ad.json was read, `defaults` when it fell back. */
   source: 'file' | 'defaults'
   /** Human-readable notes about dropped/invalid entries. */
   notes: string[]
 }
 
-/** Path of the ad config file; override with AD_CONFIG_PATH. */
-export const adConfigPath = (): string =>
+/** Path of the violation config file (config/ad.json); override with AD_CONFIG_PATH. */
+export const moderationConfigPath = (): string =>
   process.env.AD_CONFIG_PATH ?? path.resolve(process.cwd(), 'config', 'ad.json')
+
+/** Empty category map used when no explicit category is present. */
+const EMPTY_CATEGORY_MAP: ReadonlyMap<string, string> = new Map()
 
 /** Accepted ranges for the probability params; out-of-range values are dropped. */
 const PRIOR_RANGE: readonly [number, number] = [0.0001, 0.5]
@@ -66,23 +83,23 @@ function inRange(v: number, [min, max]: readonly [number, number]): boolean {
 }
 
 /**
- * Parse a JSON ad-config body into resolved lists + settings. Invalid JSON or
+ * Parse a JSON config body into resolved lists + settings. Invalid JSON or
  * invalid fields fall back to the bundled defaults; notes describe what was
  * dropped so an operator can fix the file.
  */
-export function parseAdConfig(body: string): LoadedAdConfig {
+export function parseModerationConfig(body: string): LoadedModerationConfig {
   const notes: string[] = []
-  const keywords: string[] = [...BUILTIN_AD_KEYWORDS]
-  const strongKeywords: string[] = [...BUILTIN_STRONG_AD_KEYWORDS]
+  const keywords: string[] = [...BUILTIN_VIOLATION_KEYWORDS]
+  const strongKeywords: string[] = [...BUILTIN_STRONG_VIOLATION_KEYWORDS]
   const variantKeywords: Record<string, string[]> = {}
   for (const [canon, forms] of Object.entries(BUILTIN_VARIANT_KEYWORDS)) {
     variantKeywords[canon] = [...forms]
   }
-  const patterns: RegExp[] = [...BUILTIN_AD_PATTERNS]
-  const contactPatterns: RegExp[] = [...BUILTIN_CONTACT_AD_PATTERNS]
-  const settings: AdSettings = {
+  const patterns: RegExp[] = [...BUILTIN_VIOLATION_PATTERNS]
+  const contactPatterns: RegExp[] = [...BUILTIN_CONTACT_VIOLATION_PATTERNS]
+  const settings: ModerationSettings = {
     minKeywordHits: 2,
-    bayes: { ...DEFAULT_AD_BAYES },
+    bayes: { ...DEFAULT_MODERATION_BAYES },
     keywordLrs: new Map(),
     safeUrlDomains: [...DEFAULT_SAFE_URL_DOMAINS],
     suspiciousTlds: [...DEFAULT_SUSPICIOUS_TLDS],
@@ -95,14 +112,16 @@ export function parseAdConfig(body: string): LoadedAdConfig {
   } catch (err) {
     notes.push(`invalid JSON (${err instanceof Error ? err.message : String(err)}); using defaults`)
     return {
-      keywords, strongKeywords, variantKeywords, patterns, contactPatterns, settings,
+      keywords, strongKeywords, variantKeywords, categories: EMPTY_CATEGORY_LISTS, categoryMap: EMPTY_CATEGORY_MAP,
+      patterns, contactPatterns, settings,
       source: 'defaults', notes,
     }
   }
   if (typeof data !== 'object' || data === null || Array.isArray(data)) {
     notes.push('config root must be a JSON object; using defaults')
     return {
-      keywords, strongKeywords, variantKeywords, patterns, contactPatterns, settings,
+      keywords, strongKeywords, variantKeywords, categories: EMPTY_CATEGORY_LISTS, categoryMap: EMPTY_CATEGORY_MAP,
+      patterns, contactPatterns, settings,
       source: 'defaults', notes,
     }
   }
@@ -159,6 +178,48 @@ export function parseAdConfig(body: string): LoadedAdConfig {
       }
     } else notes.push('variantKeywords: must be an object { canonical: [variants] }; keeping defaults')
   }
+
+  // Violation categories (违禁类别): { 赌博: { keywords, strongKeywords,
+  // variantKeywords }, … }. A present object replaces the "everything is 广告"
+  // baseline; keywords are tagged and the detector reports the winning tag.
+  const rawCategories = obj.categories
+  const categories = compileCategoryLists(rawCategories)
+  if (rawCategories !== undefined) {
+    if (typeof rawCategories !== 'object' || rawCategories === null || Array.isArray(rawCategories)) {
+      notes.push('categories: must be an object { 类别: { keywords, strongKeywords, variantKeywords } }; ignoring')
+    }
+  }
+  const categoryMap = new Map<string, string>()
+  for (const cat of categories.categories) {
+    for (const kw of categories.keywords[cat] ?? []) categoryMap.set(kw.toLowerCase(), cat)
+    for (const kw of categories.strong[cat] ?? []) categoryMap.set(kw.toLowerCase(), cat)
+    for (const forms of Object.values(categories.variants[cat] ?? {})) {
+      for (const form of forms) categoryMap.set(form.toLowerCase(), cat)
+    }
+  }
+  const canonicalCategory = (kw: string): string => categoryMap.get(kw.toLowerCase()) ?? DEFAULT_CATEGORY
+  for (const kw of keywords) categoryMap.set(kw.toLowerCase(), canonicalCategory(kw))
+  for (const kw of strongKeywords) categoryMap.set(kw.toLowerCase(), canonicalCategory(kw))
+  for (const forms of Object.values(variantKeywords)) {
+    for (const form of forms) categoryMap.set(form.toLowerCase(), canonicalCategory(form))
+  }
+
+  // Union the category lists into the active keyword pool (the matcher compiles
+  // `keywords` + `strongKeywords` + `variantKeywords`; categories are tags on
+  // top of that pool). Category tags come from `categoryMap`.
+  const pool = [...keywords]
+  const strongPool = [...strongKeywords]
+  for (const cat of categories.categories) {
+    pool.push(...(categories.keywords[cat] ?? []))
+    strongPool.push(...(categories.strong[cat] ?? []))
+    for (const [canon, forms] of Object.entries(categories.variants[cat] ?? {})) {
+      variantKeywords[canon] = [...new Set([...(variantKeywords[canon] ?? []), ...forms])]
+    }
+  }
+  keywords.length = 0
+  keywords.push(...new Set(pool))
+  strongKeywords.length = 0
+  strongKeywords.push(...new Set(strongPool))
 
   const rawPatterns = obj.patterns
   if (rawPatterns !== undefined) {
@@ -271,7 +332,7 @@ export function parseAdConfig(body: string): LoadedAdConfig {
 
   // Structural-feature likelihood ratios (>= LR_MIN) and conversational
   // dampening factors (0..1). All optional; bad values keep the defaults.
-  const lrParam = (name: keyof AdBayesParams): void => {
+  const lrParam = (name: keyof ModerationBayesParams): void => {
     const v = num(String(name))
     if (v !== undefined && v < LR_MIN) notes.push(`${String(name)}: ${v} < ${LR_MIN}; keeping default`)
     else if (v !== undefined) settings.bayes[name] = v as never
@@ -284,7 +345,9 @@ export function parseAdConfig(body: string): LoadedAdConfig {
   lrParam('ctaLr')
   lrParam('pitchLr')
 
-  const factorParam = (name: 'questionFactor' | 'replyFactor' | 'collabFactor'): void => {
+  const factorParam = (
+    name: 'questionFactor' | 'replyFactor' | 'collabFactor' | 'chatFactor',
+  ): void => {
     const v = num(name)
     if (v !== undefined && (v <= 0 || v > 1)) notes.push(`${name}: ${v} must be in (0..1]; keeping default`)
     else if (v !== undefined) settings.bayes[name] = v
@@ -292,6 +355,7 @@ export function parseAdConfig(body: string): LoadedAdConfig {
   factorParam('questionFactor')
   factorParam('replyFactor')
   factorParam('collabFactor')
+  factorParam('chatFactor')
 
   // Safe-URL whitelist: a present array replaces the bundled platform list.
   const rawSafe = obj.safeUrlDomains
@@ -317,41 +381,41 @@ export function parseAdConfig(body: string): LoadedAdConfig {
   settings.keywordLrs = keywordLrs
 
   return {
-    keywords, strongKeywords, variantKeywords, patterns, contactPatterns, settings,
+    keywords, strongKeywords, variantKeywords, categories, categoryMap, patterns, contactPatterns, settings,
     source: 'file', notes,
   }
 }
 
 /** Load config/ad.json if present; otherwise return the bundled defaults. */
-export function loadAdConfig(): LoadedAdConfig {
-  const filePath = adConfigPath()
+export function loadModerationConfig(): LoadedModerationConfig {
+  const filePath = moderationConfigPath()
   if (existsSync(filePath)) {
     try {
-      return parseAdConfig(readFileSync(filePath, 'utf8'))
+      return parseModerationConfig(readFileSync(filePath, 'utf8'))
     } catch (err) {
       return {
-        ...parseAdConfig('{}'),
+        ...parseModerationConfig('{}'),
         source: 'defaults',
         notes: [`failed to read ${filePath} (${err instanceof Error ? err.message : String(err)}); using defaults`],
       }
     }
   }
   return {
-    ...parseAdConfig('{}'),
+    ...parseModerationConfig('{}'),
     source: 'defaults',
     notes: [`config file ${filePath} does not exist; using defaults`],
   }
 }
 
-let cached: LoadedAdConfig | null = null
+let cached: LoadedModerationConfig | null = null
 
 /** The active config, loaded once on first use and cached afterwards. */
-export function getAdConfig(): LoadedAdConfig {
-  if (!cached) cached = loadAdConfig()
+export function getModerationConfig(): LoadedModerationConfig {
+  if (!cached) cached = loadModerationConfig()
   return cached
 }
 
 /** The active tunable settings (probability params) from the config. */
-export function getAdSettings(): AdSettings {
-  return getAdConfig().settings
+export function getModerationSettings(): ModerationSettings {
+  return getModerationConfig().settings
 }

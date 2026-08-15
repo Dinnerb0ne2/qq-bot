@@ -1,7 +1,7 @@
 # Ad rules for qq-bot — a single file with three sections, unioned with the
-# built-in lists in src/ad/. Edit and push to update a live bot (no redeploy);
-# a failed fetch keeps the built-in lists in effect. Lines starting with "#" are
-# comments; blank lines are ignored.
+# built-in lists in src/moderation/. Edit and push to update a live bot (no
+# redeploy); a failed fetch keeps the built-in lists in effect. Lines starting
+# with "#" are comments; blank lines are ignored.
 #
 # [keywords]  one term per line. General terms — each hit is weak evidence,
 #             weighted by a likelihood ratio. Generic words alone (客服, 咨询,
@@ -19,10 +19,11 @@
 #             deliberately-obfuscated spellings to the real keyword. A matched
 #             variant is scored as a strong hit of the canonical keyword and
 #             multiplied by the variantLr weight (变种词权重) — obfuscation is
-#             itself ad evidence. Format: 原词=变种1|变种2|...
+#             itself violation evidence. Format: 原词=变种1|变种2|...
 #             微信=薇信|威信|vx
 #             博彩=菠菜|bo彩
 #             These append to (not replace) the config/ad.json variantKeywords.
+#             Remote terms are uncategorized and report as 广告.
 #
 # Tuning: the forbidden words, intensity and probability params live in
 # config/ad.json (raise threshold or minKeywordHits for fewer flags, lower them

@@ -1,10 +1,10 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { loadAdConfig, parseAdConfig } from '../src/ad/settings'
+import { loadModerationConfig, parseModerationConfig } from '../src/moderation/settings'
 
-describe('parseAdConfig', () => {
+describe('parseModerationConfig', () => {
   it('loads keywords, strong keywords, patterns and probability params', () => {
-    const cfg = parseAdConfig(
+    const cfg = parseModerationConfig(
       JSON.stringify({
         prior: 0.05,
         threshold: 0.7,
@@ -57,14 +57,14 @@ describe('parseAdConfig', () => {
   })
 
   it('falls back to bundled defaults on invalid JSON', () => {
-    const cfg = parseAdConfig('{not json')
+    const cfg = parseModerationConfig('{not json')
     assert.equal(cfg.source, 'defaults')
     assert.ok(cfg.keywords.length > 0)
     assert.ok(cfg.notes.some((n) => n.startsWith('invalid JSON')))
   })
 
   it('falls back to bundled defaults when lists are not arrays of strings', () => {
-    const cfg = parseAdConfig(JSON.stringify({ keywords: '促销', strongKeywords: 42, patterns: [1] }))
+    const cfg = parseModerationConfig(JSON.stringify({ keywords: '促销', strongKeywords: 42, patterns: [1] }))
     assert.ok(cfg.keywords.length > 0)
     assert.ok(cfg.strongKeywords.length > 0)
     assert.ok(cfg.patterns.length > 0)
@@ -72,7 +72,7 @@ describe('parseAdConfig', () => {
   })
 
   it('keeps defaults for out-of-range probability params', () => {
-    const cfg = parseAdConfig(
+    const cfg = parseModerationConfig(
       JSON.stringify({
         prior: 5,
         threshold: 0.1,
@@ -108,42 +108,42 @@ describe('parseAdConfig', () => {
   })
 
   it('replaces the safe-domain whitelist (lowercased, deduped); a bad array falls back', () => {
-    const replaced = parseAdConfig(JSON.stringify({ safeUrlDomains: ['JD.com', 'jd.com', 'weird.xyz'] }))
+    const replaced = parseModerationConfig(JSON.stringify({ safeUrlDomains: ['JD.com', 'jd.com', 'weird.xyz'] }))
     assert.deepEqual(replaced.settings.safeUrlDomains, ['jd.com', 'weird.xyz'])
-    const bad = parseAdConfig(JSON.stringify({ safeUrlDomains: [42, ''] }))
+    const bad = parseModerationConfig(JSON.stringify({ safeUrlDomains: [42, ''] }))
     assert.ok(bad.settings.safeUrlDomains.length >= 20, 'defaults kept on an invalid array')
     assert.ok(bad.notes.some((n) => n.includes('safeUrlDomains')))
   })
 
   it('replaces the suspicious-TLD list (lowercased, dot stripped); a bad array falls back', () => {
-    const replaced = parseAdConfig(JSON.stringify({ suspiciousTlds: ['.TOP', '.xyz', 'top'] }))
+    const replaced = parseModerationConfig(JSON.stringify({ suspiciousTlds: ['.TOP', '.xyz', 'top'] }))
     assert.deepEqual(replaced.settings.suspiciousTlds, ['top', 'xyz'])
-    const bad = parseAdConfig(JSON.stringify({ suspiciousTlds: 42 }))
+    const bad = parseModerationConfig(JSON.stringify({ suspiciousTlds: 42 }))
     assert.ok(bad.settings.suspiciousTlds.length >= 10, 'defaults kept on an invalid array')
     assert.ok(bad.notes.some((n) => n.includes('suspiciousTlds')))
   })
 
   it('drops invalid patterns and reports them', () => {
-    const cfg = parseAdConfig(JSON.stringify({ patterns: ['(unclosed', '[z-a]'] }))
+    const cfg = parseModerationConfig(JSON.stringify({ patterns: ['(unclosed', '[z-a]'] }))
     assert.equal(cfg.patterns.length, 0)
     assert.ok(cfg.notes.some((n) => n.startsWith('pattern skipped')))
   })
 
   it('a present variantKeywords object replaces the bundled defaults', () => {
-    const cfg = parseAdConfig(JSON.stringify({ variantKeywords: { 微信: ['薇信', '威心'], QQ: ['扣扣'] } }))
+    const cfg = parseModerationConfig(JSON.stringify({ variantKeywords: { 微信: ['薇信', '威心'], QQ: ['扣扣'] } }))
     assert.deepEqual(Object.keys(cfg.variantKeywords).sort(), ['QQ', '微信'])
     assert.deepEqual(cfg.variantKeywords.微信, ['薇信', '威心'])
     assert.deepEqual(cfg.variantKeywords.QQ, ['扣扣'])
   })
 
   it('keeps the bundled variant defaults when variantKeywords is invalid', () => {
-    const cfg = parseAdConfig(JSON.stringify({ variantKeywords: '薇信' }))
+    const cfg = parseModerationConfig(JSON.stringify({ variantKeywords: '薇信' }))
     assert.ok(cfg.variantKeywords.微信.includes('薇信'), 'bundled defaults kept')
     assert.ok(cfg.notes.some((n) => n.includes('variantKeywords')))
   })
 
   it('filters invalid variant forms and reports canonicals left empty', () => {
-    const cfg = parseAdConfig(
+    const cfg = parseModerationConfig(
       JSON.stringify({ variantKeywords: { 微信: ['薇', '薇信', 42], QQ: ['', 7, 'x'.repeat(65)] } }),
     )
     assert.deepEqual(cfg.variantKeywords.微信, ['薇信'], 'valid forms survive, junk is filtered')
@@ -152,18 +152,18 @@ describe('parseAdConfig', () => {
   })
 
   it('keeps the default variantLr when out of range', () => {
-    const cfg = parseAdConfig(JSON.stringify({ variantLr: 0.5 }))
+    const cfg = parseModerationConfig(JSON.stringify({ variantLr: 0.5 }))
     assert.equal(cfg.settings.bayes.variantLr, 2)
     assert.ok(cfg.notes.some((n) => n.includes('variantLr')))
   })
 })
 
-describe('loadAdConfig', () => {
+describe('loadModerationConfig', () => {
   it('reports a missing configured file as a defaults fallback', () => {
     const previous = process.env.AD_CONFIG_PATH
     process.env.AD_CONFIG_PATH = `/tmp/qq-bot-missing-ad-config-${process.pid}.json`
     try {
-      const cfg = loadAdConfig()
+      const cfg = loadModerationConfig()
       assert.equal(cfg.source, 'defaults')
       assert.ok(cfg.notes.some((note) => note.includes('does not exist')))
     } finally {

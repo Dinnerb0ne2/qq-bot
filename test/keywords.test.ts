@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { compileKeywords, parseKeywordList, parseVariantForms } from '../src/ad/keywords'
+import { compileKeywords, parseKeywordList, parseVariantForms } from '../src/moderation/keywords'
 
 /** The compiled matcher regex is global (stateful lastIndex) — clone it per
  *  check, exactly like the detector does, so assertions are independent. */

@@ -1,19 +1,20 @@
 import type { Bot, GroupMessageEvent } from 'qq-official-bot'
 import { config } from '../config'
-import { detectAd } from './detector'
-import { getAdSettings } from './settings'
+import { detectViolation } from './detector'
+import { getModerationSettings } from './settings'
 
 /**
- * Ad moderation for group messages.
+ * Forbidden-word moderation for group messages.
  *
- * On each detected ad it recalls the message and records a strike against the
- * sender. Once a sender reaches the configured strike limit, a normal reply
- * message is sent once in the group. The QQ official group API cannot mute or
- * kick members, so removing the member remains a manual admin action.
+ * On each detected violation (广告/赌博/毒品/诈骗兼职/色情 — the winning category
+ * is reported) it recalls the message and records a strike against the sender.
+ * Once a sender reaches the configured strike limit, a normal reply message is
+ * sent once in the group. The QQ official group API cannot mute or kick
+ * members, so removing the member remains a manual admin action.
  *
  * State is in-memory and resets on restart.
  */
-export class AntiAd {
+export class ForbiddenWordModerator {
   /** Strike count + last-strike time keyed by `${group_id}:${user_id}`. The
    *  timestamp feeds the lazy pruning below, which keeps this map (and the
    *  `alerted` set derived from it) bounded across a long-running bot. */
@@ -44,14 +45,14 @@ export class AntiAd {
    *  once per PRUNE_INTERVAL_MS; entries older than STRIKE_TTL_MS are dropped,
    *  and the newest MAX_STRIKE_ENTRIES are kept when the map outgrows the cap. */
   private pruneStrikes(now: number): void {
-    if (now - this.lastPrunedAt < AntiAd.PRUNE_INTERVAL_MS) return
+    if (now - this.lastPrunedAt < ForbiddenWordModerator.PRUNE_INTERVAL_MS) return
     this.lastPrunedAt = now
     for (const [key, rec] of this.strikes) {
-      if (now - rec.time > AntiAd.STRIKE_TTL_MS) this.strikes.delete(key)
+      if (now - rec.time > ForbiddenWordModerator.STRIKE_TTL_MS) this.strikes.delete(key)
     }
-    if (this.strikes.size > AntiAd.MAX_STRIKE_ENTRIES) {
+    if (this.strikes.size > ForbiddenWordModerator.MAX_STRIKE_ENTRIES) {
       const sorted = [...this.strikes.entries()].sort((a, b) => a[1].time - b[1].time)
-      const drop = sorted.length - AntiAd.MAX_STRIKE_ENTRIES
+      const drop = sorted.length - ForbiddenWordModerator.MAX_STRIKE_ENTRIES
       for (const [key] of sorted.slice(0, drop)) this.strikes.delete(key)
     }
     for (const key of this.alerted) {
@@ -67,13 +68,13 @@ export class AntiAd {
       group = new Map()
       this.recent.set(String(e.group_id), group)
     }
-    if (group.size >= AntiAd.RECENT_MAX_PER_GROUP) {
+    if (group.size >= ForbiddenWordModerator.RECENT_MAX_PER_GROUP) {
       const oldest = [...group.entries()].sort((a, b) => a[1].time - b[1].time)[0]
       if (oldest) group.delete(oldest[0])
     }
     group.set(String(e.message_id), { time: now })
     for (const [id, rec] of group) {
-      if (now - rec.time > AntiAd.RECENT_TTL_MS) group.delete(id)
+      if (now - rec.time > ForbiddenWordModerator.RECENT_TTL_MS) group.delete(id)
     }
   }
 
@@ -86,17 +87,17 @@ export class AntiAd {
   }
 
   /**
-   * Inspect a group message. If it is an ad: recall it, add a strike, and send
-   * an alert message once the strike limit is reached.
+   * Inspect a group message. If it is a violation: recall it, add a strike, and
+   * send an alert message once the strike limit is reached.
    *
-   * @returns true if the message was handled as an ad
+   * @returns true if the message was handled as a violation
    */
   async inspect(e: GroupMessageEvent): Promise<boolean> {
     const now = Date.now()
     // Remember every message as a potential reply target before judging, so
     // follow-ups can be recognised as replies.
     this.remember(e)
-    const match = detectAd(e.raw_message, getAdSettings(), { reply: this.isReply(e) })
+    const match = detectViolation(e.raw_message, getModerationSettings(), { reply: this.isReply(e) })
     if (!match) return false
 
     const key = `${e.group_id}:${e.user_id}`
@@ -110,7 +111,7 @@ export class AntiAd {
     const name = e.sender.user_name.replace(/[\u0000-\u001f\u007f]+/g, ' ')
     const detail = match.keywords.length ? ` [${match.keywords.join(', ')}]` : ''
     this.bot.logger.warn(
-      `[anti-ad] ad from ${name}(${e.user_id}) in group ${e.group_id} ` +
+      `[moderation] violation ${match.category} from ${name}(${e.user_id}) in group ${e.group_id} ` +
         `— ${match.reason}${detail} — strike ${count}/${config.adStrikeLimit}`,
     )
 
@@ -120,11 +121,11 @@ export class AntiAd {
       this.alerted.add(key)
       try {
         await e.reply(
-          `Ad alert: "${name}" (${e.user_id}) has posted ${count} ads. ` +
+          `Violation alert: "${name}" (${e.user_id}) has posted ${count} prohibited messages. ` +
             `Please have an admin remove this member.`,
         )
       } catch (err) {
-        this.bot.logger.error('[anti-ad] failed to send alert message:', err)
+        this.bot.logger.error('[moderation] failed to send alert message:', err)
       }
     }
 
@@ -132,7 +133,7 @@ export class AntiAd {
     try {
       await this.bot.recallGroupMessage(e.group_id, e.message_id)
     } catch (err) {
-      this.bot.logger.error(`[anti-ad] failed to recall message ${e.message_id}:`, err)
+      this.bot.logger.error(`[moderation] failed to recall message ${e.message_id}:`, err)
     }
 
     return true

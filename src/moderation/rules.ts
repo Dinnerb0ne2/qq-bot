@@ -1,5 +1,5 @@
 /**
- * Ad rules: the active lists the detector reads on every message.
+ * Violation rules: the active lists the detector reads on every message.
  *
  * The base lists come from config/ad.json (settings.ts — the single source of
  * truth for forbidden words, intensity and probability params, with the bundled
@@ -34,7 +34,7 @@
 import { RemoteFile, type RefreshResult, type RemoteLogger } from './remote-file'
 import { compileKeywords, type CompiledKeywords, parseKeywordList, parseVariantForms } from './keywords'
 import { parsePatternList } from './patterns'
-import { getAdConfig } from './settings'
+import { getModerationConfig } from './settings'
 
 const patternKey = (re: RegExp): string => `${re.source} ${re.flags}`
 
@@ -43,12 +43,13 @@ const patternKey = (re: RegExp): string => `${re.source} ${re.flags}`
  * falls back to the bundled defaults when the file is missing or corrupt. The
  * remote rules file is unioned on top of these as an optional live-update layer.
  */
-const base = getAdConfig()
+const base = getModerationConfig()
 const baseKeywords: readonly string[] = base.keywords
 const baseStrongKeywords: readonly string[] = base.strongKeywords
 const baseVariants: Readonly<Record<string, readonly string[]>> = base.variantKeywords
 const basePatterns: readonly RegExp[] = base.patterns
 const baseContactPatterns: readonly RegExp[] = base.contactPatterns
+const baseCategoryMap: ReadonlyMap<string, string> = base.categoryMap
 
 /** Active lists (config/ad.json ∪ last good remote). Swapped atomically on refresh. */
 let activeKeywords: readonly string[] = baseKeywords
@@ -56,29 +57,29 @@ let activeStrongKeywords: readonly string[] = baseStrongKeywords
 let activeVariants: Readonly<Record<string, readonly string[]>> = baseVariants
 let activePatterns: readonly RegExp[] = basePatterns
 let activeContactPatterns: readonly RegExp[] = baseContactPatterns
-let activeMatcher: CompiledKeywords = compileKeywords(activeKeywords, activeStrongKeywords, activeVariants)
+let activeMatcher: CompiledKeywords = compileKeywords(activeKeywords, activeStrongKeywords, activeVariants, baseCategoryMap)
 
 /** The general keyword list (weak terms; never flag alone). */
-export const getAdKeywords = (): readonly string[] => activeKeywords
+export const getViolationKeywords = (): readonly string[] => activeKeywords
 /** The high-signal keyword list (a flag requires at least one hit here). */
-export const getAdStrongKeywords = (): readonly string[] => activeStrongKeywords
+export const getViolationStrongKeywords = (): readonly string[] => activeStrongKeywords
 /** Variant words (变种词): canonical keyword → its deliberately-obfuscated forms. */
-export const getAdVariantKeywords = (): Readonly<Record<string, readonly string[]>> => activeVariants
+export const getViolationVariantKeywords = (): Readonly<Record<string, readonly string[]>> => activeVariants
 /** Precompiled keyword matcher the detector scans messages with. */
-export const getAdKeywordMatcher = (): CompiledKeywords => activeMatcher
+export const getViolationKeywordMatcher = (): CompiledKeywords => activeMatcher
 /** The *offer* patterns the detector hard-flags on (config `patterns`). */
-export const getAdPatterns = (): readonly RegExp[] => activePatterns
+export const getViolationPatterns = (): readonly RegExp[] => activePatterns
 /** The contact/hook patterns the detector length-gates (config `contactPatterns`). */
-export const getAdContactPatterns = (): readonly RegExp[] => activeContactPatterns
+export const getViolationContactPatterns = (): readonly RegExp[] => activeContactPatterns
 
 /** Reset all lists to the config/ad.json baseline (used by tests). */
-export function resetAdRules(): void {
+export function resetViolationRules(): void {
   activeKeywords = baseKeywords
   activeStrongKeywords = baseStrongKeywords
   activeVariants = baseVariants
   activePatterns = basePatterns
   activeContactPatterns = baseContactPatterns
-  activeMatcher = compileKeywords(activeKeywords, activeStrongKeywords, activeVariants)
+  activeMatcher = compileKeywords(activeKeywords, activeStrongKeywords, activeVariants, baseCategoryMap)
 }
 
 /**
@@ -87,7 +88,7 @@ export function resetAdRules(): void {
  * (case-insensitive) route the lines that follow; lines outside a known section
  * are reported as skipped. `[variants]` lines are `原词=变种1|变种2`.
  */
-export function parseAdRules(body: string): {
+export function parseViolationRules(body: string): {
   keywords: string[]
   strongKeywords: string[]
   variants: Record<string, string[]>
@@ -159,7 +160,7 @@ function parseVariantLines(
 const file = new RemoteFile({
   name: 'ad-rules',
   apply: (body) => {
-    const { keywords, strongKeywords, variants, patterns, skipped } = parseAdRules(body)
+    const { keywords, strongKeywords, variants, patterns, skipped } = parseViolationRules(body)
     // Union each remote slice with the config/ad.json baseline, deduped; swap
     // in one assignment. Strong terms are also general keywords, so they count
     // toward the hit total. Remote variant forms append to (not replace) the
@@ -178,17 +179,17 @@ const file = new RemoteFile({
     for (const re of basePatterns) merged.set(patternKey(re), re)
     for (const re of patterns) merged.set(patternKey(re), re)
     activePatterns = [...merged.values()]
-    activeMatcher = compileKeywords(activeKeywords, activeStrongKeywords, activeVariants)
+    activeMatcher = compileKeywords(activeKeywords, activeStrongKeywords, activeVariants, baseCategoryMap)
     return { parsed: keywords.length + strongKeywords.length + patterns.length, skipped: skipped.length }
   },
 })
 
 /** Fetch the rules file from `url` and union it with the baselines. */
-export const refreshAdRules = (url: string, opts?: { timeoutMs?: number }): Promise<RefreshResult> =>
+export const refreshViolationRules = (url: string, opts?: { timeoutMs?: number }): Promise<RefreshResult> =>
   file.refresh(url, opts)
 
 /** Start periodic rules refresh; returns a stop function. */
-export const startAdRulesRefresh = (params: {
+export const startViolationRulesRefresh = (params: {
   url: string
   intervalMs: number
   logger: RemoteLogger

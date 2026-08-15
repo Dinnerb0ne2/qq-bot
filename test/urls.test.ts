@@ -7,7 +7,7 @@ import {
   scanUrls,
   DEFAULT_SAFE_URL_DOMAINS,
   DEFAULT_SUSPICIOUS_TLDS,
-} from '../src/ad/urls'
+} from '../src/moderation/urls'
 
 describe('extractUrls', () => {
   it('extracts scheme-d URLs', () => {

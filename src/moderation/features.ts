@@ -24,9 +24,17 @@ export const REGISTER_RE = /(报名|开课|训练营|集训营)[^。\n]{0,20}(�
 export const SERVICE_RE =
   /(出租|代充|代充值|代挂|代做|按小时计费|包月|合作价|首月|企业折扣|内部价)[^。\n]{0,24}(联系|客服|微信|加|价格|价|元|%|[％]|优惠|便宜)|(代充|代充值|按小时计费|出租)/
 export const CTA_RE = /(想上车|欢迎扩散|有需要联系|有需要的?联系|需要的?联系|联系我|私信我|私我|滴滴我|扫我|赶紧来|立即加入|马上报名|手慢无|快上车|趁早)/
-export const QUESTION_RE = /[?？]\s*$|(有没有|谁知道|请问|求推荐|求问|有人用|大家推荐|有推荐|值得|靠谱吗|怎么样|怎么选|如何选|好不好|了解过|用过的|推荐一个|有.{0,6}吗)/
+export const QUESTION_RE =
+  /[?？]\s*$|(有没有|有木有|谁知道|谁有|请问|想问下|想问|想问问|问一下|问下|问个|请教|求教|求问|求解答|求推荐|求指点|求个|有人用|大家推荐|有推荐|推荐个|推荐下|推荐一个|给推荐|值得|靠谱吗|怎么样|怎么选|如何选|咋样|好不好|了解过|用过的|用过吗|听说过吗|哪个好|哪家好|怎么用|如何用|需要吗|有.{0,6}吗)/
 export const COLLAB_RE =
-  /(找|招).{0,12}(合伙人|队友|搭子|伙伴|组员)|(一起|组队|组个队).{0,10}(做|创业|搞|合伙)|(帮忙|帮改|求助|内推|求内推|求个|求推荐|拼单|求.{0,6}(指点|推荐|内推|指教)|合伙)/
+  /(找|招).{0,12}(合伙人|队友|搭子|伙伴|组员|同伙|搭伙)|(一起|组队|组个队).{0,10}(做|创业|搞|合伙)|(帮忙|帮改|求助|求带|内推|求内推|求个|求推荐|求指点|拼单|帮看|帮选|带带我|拉我一把|求.{0,6}(指点|推荐|内推|指教|建议|教程|资料|代码)|合伙)/
+
+/** Casual chit-chat markers — colloquial fillers an ad never uses (a "快来抢吧"
+ *  single trailing 吧/哈 is *not* one; ads write that). When present the soft
+ *  keyword/contact evidence is dampened by `bayes.chatFactor`. Matches a marker
+ *  either as the whole message, or bounded by whitespace/punctuation. */
+export const CHAT_RE =
+  /^[哈嗯哦噢嘿嘿]{1,5}[\s~～。.!！，,]*$|(哈哈哈+|哈哈|嘿嘿|hhh|hh|笑死|好家伙|厉害了|太强了|学到了|原来如此|顶一个|顶一下|mark|马克|不错不错|妙啊|真不错|可以的|牛的|收到收到|好的好的)(?=[\s，,。.!！~～]|$)/
 
 /** Promo/urgency/job/selling words — the *pitch* half of a pitch+contact ad
  *  (团购/优惠券/先到先得 on one side, 兼职/日薪/出售 on the other). These are
@@ -54,7 +62,7 @@ export const PITCH_RE = new RegExp(
 
 /** Which structural ad signals were found, and which conversational dampeners
  *  apply. */
-export interface AdFeatures {
+export interface ModerationFeatures {
   /** Concrete promo/coupon/invite code present (优惠码 AIPRO100). Hard signal. */
   code: boolean
   /** Explicit price-promo structure present (立减500 / 满100减50 / 打7折). */
@@ -72,9 +80,11 @@ export interface AdFeatures {
   question: boolean
   /** Reads like collaboration / help-seeking — dampen soft evidence. */
   collab: boolean
+  /** Reads like casual chit-chat (哈哈 / 学到了 / 顶一个 …) — dampen soft evidence. */
+  chat: boolean
 }
 
-export const NO_FEATURES: AdFeatures = {
+export const NO_FEATURES: ModerationFeatures = {
   code: false,
   price: false,
   register: false,
@@ -83,10 +93,11 @@ export const NO_FEATURES: AdFeatures = {
   pitch: false,
   question: false,
   collab: false,
+  chat: false,
 }
 
 /** Extract the ad features of a message. */
-export function analyzeFeatures(text: string): AdFeatures {
+export function analyzeFeatures(text: string): ModerationFeatures {
   return {
     code: PROMO_CODE_RE.test(text),
     price: PRICE_PROMO_RE.test(text),
@@ -96,5 +107,6 @@ export function analyzeFeatures(text: string): AdFeatures {
     pitch: PITCH_RE.test(text),
     question: QUESTION_RE.test(text),
     collab: COLLAB_RE.test(text),
+    chat: CHAT_RE.test(text),
   }
 }

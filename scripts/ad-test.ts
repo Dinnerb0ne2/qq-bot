@@ -1,9 +1,10 @@
 /**
- * Ad-detection test tool.
+ * Forbidden-word (违禁词) detection test tool.
  *
  * Paste or pass a message and see the full scoring breakdown: matched
- * keywords with their likelihood-ratio weights, URL evidence, length evidence
- * and the final ad confidence (0..1) against the configured threshold.
+ * keywords with their likelihood-ratio weights and violation category
+ * (广告/赌博/毒品/诈骗兼职/色情), URL evidence, length evidence and the final
+ * violation confidence (0..1) against the configured threshold.
  *
  * Usage:
  *   pnpm ad-test "加V 咨询 客服 http://sketchy.xyz/abc"
@@ -15,8 +16,8 @@
  */
 
 import { createInterface } from 'node:readline'
-import { analyzeAd, type AdAnalysis } from '../src/ad/detector'
-import { getAdSettings, type AdSettings } from '../src/ad/settings'
+import { analyzeViolation, type ViolationAnalysis } from '../src/moderation/detector'
+import { getModerationSettings, type ModerationSettings } from '../src/moderation/settings'
 
 function parseThreshold(raw: string): number | undefined {
   if (!raw.startsWith('--threshold=')) return undefined
@@ -24,7 +25,7 @@ function parseThreshold(raw: string): number | undefined {
   return Number.isFinite(n) && n > 0 && n <= 1 ? n : undefined
 }
 
-function withThreshold(settings: AdSettings, threshold: number | undefined): AdSettings {
+function withThreshold(settings: ModerationSettings, threshold: number | undefined): ModerationSettings {
   if (threshold === undefined || threshold === settings.bayes.threshold) return settings
   return {
     ...settings,
@@ -36,12 +37,12 @@ const W = 10
 const pad = (s: string, w: number): string => s.padEnd(w)
 const sign = (n: number): string => (n >= 0 ? '+' : '')
 
-function keywordTable(a: AdAnalysis): string[] {
+function keywordTable(a: ViolationAnalysis): string[] {
   const lines: string[] = []
-  lines.push(`  ${pad('匹配词', 12)}${pad('次数', 4)}${pad('strong', 8)}${pad('变种', 6)}${pad('LR', W)}${pad('权重', W)}${pad('贡献log-odds', 14)}`)
+  lines.push(`  ${pad('匹配词', 12)}${pad('类别', 10)}${pad('次数', 4)}${pad('strong', 8)}${pad('变种', 6)}${pad('LR', W)}${pad('权重', W)}${pad('贡献log-odds', 14)}`)
   for (const k of a.keywords) {
     lines.push(
-      `  ${pad(k.keyword, 12)}${pad(String(k.count), 4)}${pad(k.strong ? '是' : '否', 8)}` +
+      `  ${pad(k.keyword, 12)}${pad(k.category, 10)}${pad(String(k.count), 4)}${pad(k.strong ? '是' : '否', 8)}` +
         `${pad(k.variant ? '是' : '', 6)}${pad(k.lr.toFixed(1), W)}${pad(k.weight.toFixed(4), W)}${sign(k.logOdds)}${k.logOdds.toFixed(4)}`,
     )
   }
@@ -53,7 +54,7 @@ function keywordTable(a: AdAnalysis): string[] {
   return lines
 }
 
-function urlSection(a: AdAnalysis): string[] {
+function urlSection(a: ViolationAnalysis): string[] {
   const lines: string[] = []
   if (a.urls.length === 0) {
     lines.push('  (无 URL)')
@@ -66,10 +67,10 @@ function urlSection(a: AdAnalysis): string[] {
   return lines
 }
 
-function render(text: string, settings: AdSettings): void {
-  const a = analyzeAd(text, settings)
+function render(text: string, settings: ModerationSettings): void {
+  const a = analyzeViolation(text, settings)
   const bar = '─'.repeat(58)
-  const done = a.flagged ? '★ 判定为广告 → 撤回' : '· 非广告 → 不撤回'
+  const done = a.flagged ? `★ 判定为违禁词[${a.category}] → 撤回` : '· 非违禁 → 不撤回'
 
   console.log(`\n${bar}`)
   console.log(`输入: ${a.text.replace(/\r?\n/g, '\\n')}`)
@@ -85,11 +86,12 @@ function render(text: string, settings: AdSettings): void {
     feat.pitch ? '推销话术' : '',
     feat.question ? '提问语气' : '',
     feat.collab ? '协作/求助' : '',
+    feat.chat ? '闲聊语气' : '',
   ].filter(Boolean)
   console.log(`\n[结构特征] ${feats.length ? feats.join(', ') : '(无)'}${a.reply ? '  回复上一条' : ''}`)
 
   if (a.trigger === 'pattern') {
-    console.log(`\n[模式命中] (强信号正则, 直接判定)`)
+    console.log(`\n[模式命中] (强信号正则, 直接判定) 类别: ${a.category}`)
     for (const p of a.patterns) console.log(`  /${p}/`)
     for (const p of a.contactPatterns) console.log(`  /${p}/ (contact${a.contactHard ? '' : ', 软证据'})`)
   } else {
@@ -97,10 +99,12 @@ function render(text: string, settings: AdSettings): void {
     if (a.keywords.length > 0) {
       console.log(keywordTable(a).join('\n'))
       console.log(`  强信号词(strong/高LR): ${a.hardKeyword ? '是' : '否'}`)
+      const evi = Object.entries(a.categoryEvidence).filter(([, n]) => n > 0)
+      if (evi.length) console.log(`  [违禁类别] ${evi.map(([c, n]) => `${c}×${n}`).join(', ')} → 命中: ${a.category}`)
       const softOnly =
         !a.hardKeyword && !a.urls.some((u) => !u.benign) && !a.features.code && !a.features.service &&
         !a.features.price && !a.features.register && !a.features.cta && !a.features.pitch
-      if (softOnly) console.log('  无 strong 词/可疑URL/促销结构 → 广告特征未共现, 不进关键词评分')
+      if (softOnly) console.log('  无 strong 词/可疑URL/促销结构 → 违禁特征未共现, 不进关键词评分')
     } else {
       console.log(`  未达到评分门槛, 跳过关键词评分`)
     }
@@ -111,7 +115,7 @@ function render(text: string, settings: AdSettings): void {
 
   console.log(`\n[score]`)
   const damp =
-    a.dampeningFactor !== 1 ? ` (语气衰减 ×${a.dampeningFactor.toFixed(2)}${a.reply ? ', 回复' : ''}${a.features.question ? ', 提问' : ''}${a.features.collab ? ', 协作' : ''})` : ''
+    a.dampeningFactor !== 1 ? ` (语气衰减 ×${a.dampeningFactor.toFixed(2)}${a.reply ? ', 回复' : ''}${a.features.question ? ', 提问' : ''}${a.features.collab ? ', 协作' : ''}${a.features.chat ? ', 闲聊' : ''})` : ''
   console.log(`  logit         : ${sign(a.priorLogit)}${a.priorLogit.toFixed(4)}`)
   console.log(`  keyword       : ${sign(a.keywordLogOdds)}${a.keywordLogOdds.toFixed(4)}${damp}`)
   if (a.contactLogOdds !== 0) console.log(`  contact    : ${sign(a.contactLogOdds)}${a.contactLogOdds.toFixed(4)}`)
@@ -120,7 +124,7 @@ function render(text: string, settings: AdSettings): void {
   console.log(`  length        : ${sign(a.lengthLogOdds)}${a.lengthLogOdds.toFixed(4)}`)
   console.log(`  URL           : ${sign(a.urlLogOdds)}${a.urlLogOdds.toFixed(4)}`)
   console.log(`  log-odds      : ${sign(a.logOdds)}${a.logOdds.toFixed(4)}`)
-  console.log(`  置信度 P(ad)  : ${a.probability.toFixed(4)}`)
+  console.log(`  置信度 P(违禁) : ${a.probability.toFixed(4)}`)
   console.log(`  阈值          : ${a.threshold}`)
   console.log(`  结论          : ${done}`)
   console.log(bar)
@@ -130,7 +134,7 @@ async function main(): Promise<void> {
   const args = process.argv.slice(2)
   const thresholdRaw = args.find((s) => s.startsWith('--threshold='))
   const threshold = thresholdRaw ? parseThreshold(thresholdRaw) : undefined
-  const settings = withThreshold(getAdSettings(), threshold)
+  const settings = withThreshold(getModerationSettings(), threshold)
   const inputs = args.filter((s) => !s.startsWith('--'))
 
   if (threshold !== undefined) console.log(`(阈值覆盖: 0.60 → ${threshold}, 仅本次运行)`)

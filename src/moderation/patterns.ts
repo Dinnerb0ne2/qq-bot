@@ -10,10 +10,10 @@
  *
  * There are two pattern families:
  *
- * - `BUILTIN_AD_PATTERNS` (config `patterns`) — *offer* structures (a concrete
+ * - `BUILTIN_VIOLATION_PATTERNS` (config `patterns`) — *offer* structures (a concrete
  *   discount, a group-buy push, a cloud-server price). A single match hard-flags
  *   the message regardless of length or keywords: these are the pitch itself.
- * - `BUILTIN_CONTACT_AD_PATTERNS` (config `contactPatterns`) — *contact* /
+ * - `BUILTIN_CONTACT_VIOLATION_PATTERNS` (config `contactPatterns`) — *contact* /
  *   hook patterns (加微信:xxx, QQ号, 电话, 扫码领…). These only hard-flag when
  *   the message is short (too little text to be anything but the hook) or two
  *   or more of them co-occur; a lone one inside a long message adds weak
@@ -37,7 +37,7 @@ export interface ParseResult<T> {
 }
 
 /** High-signal *offer* patterns — a single match flags the message as an ad. */
-export const BUILTIN_AD_PATTERNS: readonly RegExp[] = [
+export const BUILTIN_VIOLATION_PATTERNS: readonly RegExp[] = [
   /[0-9一二三四五六七八九十百]+[%％].*?折扣/,
   /还差\d{1,2}人.{0,10}(拼团|团购|满减)/,
   // Cloud-server / VPS reselling ads (京东云/阿里云/腾讯云 低价秒杀). The recurring
@@ -48,7 +48,7 @@ export const BUILTIN_AD_PATTERNS: readonly RegExp[] = [
 ]
 
 /** Contact/hook patterns — length-gated (see module doc + detector.ts). */
-export const BUILTIN_CONTACT_AD_PATTERNS: readonly RegExp[] = [
+export const BUILTIN_CONTACT_VIOLATION_PATTERNS: readonly RegExp[] = [
   /加[V微]信?[:：]?\s*([a-zA-Z0-9_-]{4,20})/,
   /微信[号码]?[:：]?\s*([a-zA-Z0-9_-]{4,20})/,
   /([Qq]{2}|扣扣)[:：]?\s*([0-9]{5,11})/,

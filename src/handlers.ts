@@ -1,6 +1,6 @@
 import { segment, type Bot, type GroupMessageEvent, type PrivateMessageEvent } from 'qq-official-bot'
 import { config } from './config'
-import { AntiAd, getAdConfig, startAdRulesRefresh } from './ad'
+import { ForbiddenWordModerator, getModerationConfig, startViolationRulesRefresh } from './moderation'
 import { formatNewsMarkdown } from './news/format'
 import { pushDailySummary } from './news/push'
 import { generateDailySummary, getStoredSummary, parseNewsDate } from './news/service'
@@ -11,19 +11,20 @@ import { startDailyNewsSummary } from './news/scheduler'
  * Wire per-message-type business logic here to keep index.ts small.
  */
 export function registerHandlers(bot: Bot): void {
-  const antiAd = new AntiAd(bot)
+  const moderator = new ForbiddenWordModerator(bot)
 
-  const adConfig = getAdConfig()
+  const modConfig = getModerationConfig()
   bot.logger.info(
-    `[anti-ad] config from ${adConfig.source}: ${adConfig.keywords.length} keywords, ` +
-      `${adConfig.strongKeywords.length} strong, ${adConfig.patterns.length} patterns, ` +
-      `minHits=${adConfig.settings.minKeywordHits} threshold=${adConfig.settings.bayes.threshold}`,
+    `[moderation] config from ${modConfig.source}: ${modConfig.keywords.length} keywords, ` +
+      `${modConfig.strongKeywords.length} strong, ${modConfig.patterns.length} patterns, ` +
+      `categories=${modConfig.categories.categories.join('/')} ` +
+      `minHits=${modConfig.settings.minKeywordHits} threshold=${modConfig.settings.bayes.threshold}`,
   )
-  for (const note of adConfig.notes) bot.logger.warn(`[anti-ad] ${note}`)
+  for (const note of modConfig.notes) bot.logger.warn(`[moderation] ${note}`)
 
-  // Optionally augment the config-file ad keywords & patterns from a remote file.
+  // Optionally augment the config-file forbidden words & patterns from a remote file.
   if (config.adRulesUrl) {
-    startAdRulesRefresh({
+    startViolationRulesRefresh({
       url: config.adRulesUrl,
       intervalMs: config.adRulesRefreshMinutes * 60_000,
       logger: bot.logger,
@@ -31,7 +32,7 @@ export function registerHandlers(bot: Bot): void {
   }
 
   bot.on('message.group', (e) => {
-    handleGroupMessage(bot, antiAd, e).catch((err) => bot.logger.error('Failed to handle group message:', err))
+    handleGroupMessage(bot, moderator, e).catch((err) => bot.logger.error('Failed to handle group message:', err))
   })
 
   bot.on('message.private', (e) => {
@@ -63,14 +64,14 @@ export function startNewsSchedule(bot: Bot): void {
 }
 
 /** Handle group messages */
-async function handleGroupMessage(bot: Bot, antiAd: AntiAd, e: GroupMessageEvent): Promise<void> {
+async function handleGroupMessage(bot: Bot, moderator: ForbiddenWordModerator, e: GroupMessageEvent): Promise<void> {
   // Ignore the bot's own messages.
   if (e.user_id === e.self_id) return
 
   const text = e.raw_message.trim()
-  // Ad moderation: recall + strike tracking + admin escalation.
-  // If the message was an ad, stop here (do not treat it as a command).
-  if (await antiAd.inspect(e)) return
+  // Forbidden-word moderation: recall + strike tracking + admin escalation.
+  // If the message was a violation, stop here (do not treat it as a command).
+  if (await moderator.inspect(e)) return
 
   await dispatchCommand(bot, text, e)
 }

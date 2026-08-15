@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { detectAd } from '../src/ad/detector'
-import { getAdSettings } from '../src/ad/settings'
+import { detectViolation } from '../src/moderation/detector'
+import { getModerationSettings } from '../src/moderation/settings'
 
 /**
  * The real-world regression set: a realistic tech/AI community conversation.
@@ -48,12 +48,12 @@ const cases: { text: string; reply?: boolean; ad?: boolean }[] = [
 ]
 
 describe('real community conversation regression (30 messages)', () => {
-  const settings = getAdSettings()
+  const settings = getModerationSettings()
 
   cases.forEach((c, i) => {
     const label = c.ad ? 'ad' : 'pass'
     it(`#${i + 1} should ${label}: ${c.text.slice(0, 18)}…`, () => {
-      const hit = detectAd(c.text, settings, { reply: c.reply === true })
+      const hit = detectViolation(c.text, settings, { reply: c.reply === true })
       if (c.ad) {
         assert.ok(hit, `expected #${i + 1} to be flagged: ${c.text}`)
       } else {

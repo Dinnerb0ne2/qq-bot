@@ -1,13 +1,14 @@
 /**
- * Naive-Bayes ad scoring.
+ * Naive-Bayes violation scoring.
  *
- * Every keyword hit is evidence for the message being an ad, combined with a
- * prior base rate. Each keyword has a likelihood ratio
- *   LR = P(hit | ad) / P(hit | not-ad)
+ * Every keyword hit is evidence for the message violating the group's rules
+ * (an ad, a gambling/drug pitch, a scam job — see the `categories` config),
+ * combined with a prior base rate. Each keyword has a likelihood ratio
+ *   LR = P(hit | violation) / P(hit | clean)
  * — strong (high-signal) keywords are almost never present in innocent chat and
  * get a high LR; generic keywords get a low one. Under the naive-Bayes
  * independence assumption the posterior log-odds are
- *   logit(P(ad | text)) = log(P(ad)/(1-P(ad))) + Σ log(LR_k)
+ *   logit(P(violation | text)) = log(P(violation)/(1-P(violation))) + Σ log(LR_k)
  * and a message is flagged when the resulting probability clears a threshold.
  *
  * The model is calibrated around the group's actual chat habits and keeps
@@ -58,7 +59,7 @@
  *
  * All knobs are overridable via config/ad.json at runtime (see settings.ts).
  */
-export interface AdBayesParams {
+export interface ModerationBayesParams {
   /** Prior probability that an arbitrary group message is an ad (0..1). */
   prior: number
   /** Posterior probability at/above which a message is flagged (0..1). */
@@ -138,9 +139,13 @@ export interface AdBayesParams {
    *  evidence when the message asks for help / partnership (找合伙人, 组队,
    *  内推, 求推荐…) — collaboration is how a tech group actually talks. */
   collabFactor: number
+  /** Conversational dampening (0..1] applied to the soft keyword + contact
+   *  evidence when the message reads as casual chit-chat (哈哈, 学到了, 顶一个,
+   *  mark …) — banter never contains a real pitch, only its vocabulary does. */
+  chatFactor: number
 }
 
-export const DEFAULT_AD_BAYES: AdBayesParams = {
+export const DEFAULT_MODERATION_BAYES: ModerationBayesParams = {
   prior: 0.02,
   threshold: 0.6,
   strongLr: 40,
@@ -165,10 +170,11 @@ export const DEFAULT_AD_BAYES: AdBayesParams = {
   questionFactor: 0.55,
   replyFactor: 0.6,
   collabFactor: 0.7,
+  chatFactor: 0.75,
 }
 
 /** One distinct keyword's evidence contribution. */
-export interface AdHit {
+export interface ModerationHit {
   /** True when the keyword is in the high-signal (strong) list. */
   strong: boolean
   /** Number of occurrences in the message (repetition is discounted). */
@@ -185,16 +191,16 @@ export interface AdHit {
  * `chatLength` and above, and a superlinear ramp down to `shortKeywordFactor`
  * at length 0. Very short messages therefore keep almost none of their
  * keyword evidence — a 4-char "加我私聊" is a private-chat invitation, not a
- * structured ad. Shared by adLogOdds() and the analysis/test tool.
+ * structured violation. Shared by violationLogOdds() and the analysis/test tool.
  */
-export function adShortScale(length: number, params: AdBayesParams): number {
+export function violationShortScale(length: number, params: ModerationBayesParams): number {
   if (length >= params.chatLength) return 1
   const t = length / params.chatLength
   return params.shortKeywordFactor + (1 - params.shortKeywordFactor) * Math.pow(t, params.shortRampPower)
 }
 
 /**
- * Log-odds of a message being an ad given the keyword hits and length.
+ * Log-odds of a message being a violation given the keyword hits and length.
  *
  * Hits are ranked by evidence so the diminishing-return penalty lands on the
  * weakest generic terms first.
@@ -209,11 +215,11 @@ export function adShortScale(length: number, params: AdBayesParams): number {
  *   `ln(suspiciousUrlLr)` to the log-odds.
  * @param suspiciousTld true when such a URL also uses a spam-prone TLD
  *   (.top/.xyz/.icu/…). Contributes `ln(suspiciousTldLr)`.
- * @returns the posterior log-odds log(P(ad)/P(not-ad))
+ * @returns the posterior log-odds log(P(violation)/P(clean))
  */
-export function adLogOdds(
-  hits: readonly AdHit[],
-  params: AdBayesParams,
+export function violationLogOdds(
+  hits: readonly ModerationHit[],
+  params: ModerationBayesParams,
   length?: number,
   suspiciousUrl = false,
   suspiciousTld = false,
@@ -221,7 +227,7 @@ export function adLogOdds(
   const priorLogit = Math.log(params.prior / (1 - params.prior))
   const known = length !== undefined
 
-  const lrOf = (h: AdHit): number => {
+  const lrOf = (h: ModerationHit): number => {
     const base = h.lr ?? (h.strong ? params.strongLr : params.weakLr)
     // A deliberate variant is obfuscation — weigh it like a strong hit and
     // multiply by the variant-word weight (变种词权重).
@@ -232,7 +238,7 @@ export function adLogOdds(
   let evidence = 0
   let genericSeen = 0
   for (const h of ordered) {
-    // Repeated single keyword -> attention-seeking, not an ad: geometric decay.
+    // Repeated single keyword -> attention-seeking, not a violation: geometric decay.
     const repetition = Math.pow(params.repeatDiminish, Math.max(0, h.count - 1))
     let weight = repetition
     if (!h.strong) {
@@ -244,7 +250,7 @@ export function adLogOdds(
   }
 
   if (known) {
-    evidence *= adShortScale(length, params)
+    evidence *= violationShortScale(length, params)
     evidence += Math.min(params.maxLengthLr, params.lengthLr * Math.log(1 + length / params.chatLength))
   }
 
@@ -254,7 +260,7 @@ export function adLogOdds(
   return priorLogit + evidence
 }
 
-/** Posterior probability P(ad | text) from the log-odds. */
-export function adProbability(logOdds: number): number {
+/** Posterior probability P(violation | text) from the log-odds. */
+export function violationProbability(logOdds: number): number {
   return 1 / (1 + Math.exp(-logOdds))
 }

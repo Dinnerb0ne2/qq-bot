@@ -11,7 +11,7 @@
 
 /** Bundled fallback keywords, grouped by category. Used when config/ad.json
  *  is missing or has no keywords field. */
-export const BUILTIN_AD_KEYWORDS: readonly string[] = [
+export const BUILTIN_VIOLATION_KEYWORDS: readonly string[] = [
   // Shopping / promotions
   '促销', '打折', '优惠', '特价', '折扣', '团购', '秒杀', '限时', '抢购', '特惠',
   '包邮', '免费送', '礼品', '限量', '降价', '甩卖', '一折', '二折', '半价',
@@ -55,7 +55,7 @@ export const BUILTIN_AD_KEYWORDS: readonly string[] = [
  * come back. Prefer moving specific promo terms to the remote `[strong]`
  * section.
  */
-export const BUILTIN_STRONG_AD_KEYWORDS: readonly string[] = [
+export const BUILTIN_STRONG_VIOLATION_KEYWORDS: readonly string[] = [
   // Shopping / promotions (the hook)
   '秒杀', '代购', '包邮', '免费送', '返利', '半价', '一折', '二折', '甩卖', '特价', '抢购',
   // Money / loans
@@ -105,6 +105,69 @@ export const BUILTIN_VARIANT_KEYWORDS: Readonly<Record<string, readonly string[]
   可卡因: ['可可精'],
 }
 
+/** Fallback category tag: keywords without an explicit category (including all
+ *  remote/`[keywords]` additions) are tagged 广告. */
+export const DEFAULT_CATEGORY = '广告'
+
+/** Keyword lists grouped by violation category (赌博/毒品/诈骗兼职/色情/广告).
+ *  `keywords`/`strong`/`variants` are keyed by category tag; the config's
+ *  `categories` field (config/ad.json) is the single source of truth and these
+ *  are rebuilt on every config refresh. */
+export interface CategoryLists {
+  readonly categories: readonly string[]
+  readonly keywords: Readonly<Record<string, readonly string[]>>
+  readonly strong: Readonly<Record<string, readonly string[]>>
+  readonly variants: Readonly<Record<string, Readonly<Record<string, readonly string[]>>>>
+}
+
+export const EMPTY_CATEGORY_LISTS: CategoryLists = {
+  categories: [],
+  keywords: {},
+  strong: {},
+  variants: {},
+}
+
+/** Parse a raw `categories` object from config into per-category keyword lists.
+ *  Each category object may hold `keywords`, `strongKeywords` and
+ *  `variantKeywords` (same shapes as the top-level fields). Malformed entries
+ *  are skipped; unknown/empty categories are dropped. */
+export function compileCategoryLists(
+  raw: unknown,
+  defaultCategory: string = DEFAULT_CATEGORY,
+): CategoryLists {
+  const categories: string[] = []
+  const keywords: Record<string, string[]> = {}
+  const strong: Record<string, string[]> = {}
+  const variants: Record<string, Record<string, readonly string[]>> = {}
+  if (raw && typeof raw === 'object') {
+    for (const [cat, obj] of Object.entries(raw as Record<string, unknown>)) {
+      const c = cat.trim()
+      if (!c) continue
+      const kw = obj && typeof obj === 'object' ? (obj as Record<string, unknown>) : {}
+      const list = Array.isArray(kw.keywords) ? kw.keywords : []
+      const strongList = Array.isArray(kw.strongKeywords) ? kw.strongKeywords : []
+      if (!list.length && !strongList.length) continue
+      categories.push(c)
+      keywords[c] = parseKeywordList(list.join('\n'))
+      strong[c] = parseKeywordList(strongList.join('\n'))
+      if (kw.variantKeywords && typeof kw.variantKeywords === 'object') {
+        const forms: Record<string, string[]> = {}
+        for (const [canon, fs] of Object.entries(
+          kw.variantKeywords as Record<string, unknown>,
+        )) {
+          const parsed = parseVariantForms(
+            Array.isArray(fs) ? (fs as string[]) : [String(fs ?? '')],
+          )
+          if (parsed.length) forms[canon] = parsed
+        }
+        if (Object.keys(forms).length) variants[c] = forms
+      }
+    }
+  }
+  if (!categories.includes(defaultCategory)) categories.push(defaultCategory)
+  return { categories, keywords, strong, variants }
+}
+
 /** Ignore keywords shorter/longer than these to avoid over-matching and junk. */
 const MIN_KEYWORD_LENGTH = 2
 const MAX_KEYWORD_LENGTH = 64
@@ -135,6 +198,11 @@ export interface CompiledKeywords {
   /** Lowercase variant form → canonical keyword it obfuscates. A hit here is a
    *  deliberate variant (变种词) and scores as a strong hit × `variantLr`. */
   readonly variants: ReadonlyMap<string, string>
+  /** Lowercase keyword → violation category tag (广告 by default). Keywords
+   *  added by the remote rules file inherit the fallback tag. */
+  readonly category: ReadonlyMap<string, string>
+  /** Ordered category tags present in this matcher, config order first. */
+  readonly categories: readonly string[]
   /** Total unique keywords compiled. */
   readonly size: number
 }
@@ -143,12 +211,15 @@ export interface CompiledKeywords {
  * Merge the general, strong and variant keyword lists into one matcher:
  * deduped, longest-first alternation with case-insensitive matching and word
  * boundaries around short ASCII tokens. Variant forms map to the canonical
- * keyword they obfuscate via `variants` / `canonical`.
+ * keyword they obfuscate via `variants` / `canonical`. `categories` (lowercase
+ * keyword → category tag) labels each compiled keyword; uncategorized keywords
+ * fall back to `DEFAULT_CATEGORY` (广告).
  */
 export function compileKeywords(
   general: readonly string[],
   strong: readonly string[],
   variants?: Readonly<Record<string, readonly string[]>>,
+  categories?: ReadonlyMap<string, string>,
 ): CompiledKeywords {
   const strongKeys = new Set(strong.map((k) => k.toLowerCase()))
   const variantsMap = new Map<string, string>()
@@ -168,19 +239,26 @@ export function compileKeywords(
   }
 
   const parts: string[] = []
+  const category = new Map<string, string>()
   for (const kw of [...all].sort((a, b) => b.length - a.length)) {
     const key = kw.toLowerCase()
     if (canonical.has(key)) continue
     canonical.set(key, variantsMap.get(key) ?? kw)
+    category.set(key, categories?.get(key) ?? DEFAULT_CATEGORY)
     const escaped = escapeRegExp(kw)
     parts.push(SHORT_ASCII.test(kw) ? `\\b${escaped}\\b` : escaped)
   }
+
+  const categoryTags = [...new Set(category.values())]
+  if (!categoryTags.includes(DEFAULT_CATEGORY)) categoryTags.push(DEFAULT_CATEGORY)
 
   return {
     regex: new RegExp(parts.join('|'), 'gi'),
     canonical,
     strong: strongKeys,
     variants: variantsMap,
+    category,
+    categories: categoryTags,
     size: canonical.size,
   }
 }
