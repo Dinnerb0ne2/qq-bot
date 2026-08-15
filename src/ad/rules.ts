@@ -18,15 +18,21 @@
  *   拉[你您]进[群裙]
  *   /加\s*薇/i
  *
+ *   [variants]
+ *   微信=薇信|威信|vx
+ *   博彩=菠菜|bo彩
+ *
  * `[keywords]` are general terms and never flag on their own; the detector only
  * flags a message that also contains at least one `[strong]` term (high-signal
- * contact/promo/spam words, see keywords.ts). Lines before any section, and `#`
- * lines, are ignored. A single fetch updates all lists atomically; any failure
- * keeps the current lists (see RemoteFile).
+ * contact/promo/spam words, see keywords.ts). `[variants]` maps a canonical
+ * keyword to its deliberately-obfuscated spellings (变种词) — a matched variant
+ * counts as a strong hit of the canonical keyword, weighted by `variantLr`.
+ * Lines before any section, and `#` lines, are ignored. A single fetch updates
+ * all lists atomically; any failure keeps the current lists (see RemoteFile).
  */
 
 import { RemoteFile, type RefreshResult, type RemoteLogger } from './remote-file'
-import { compileKeywords, type CompiledKeywords, parseKeywordList } from './keywords'
+import { compileKeywords, type CompiledKeywords, parseKeywordList, parseVariantForms } from './keywords'
 import { parsePatternList } from './patterns'
 import { getAdConfig } from './settings'
 
@@ -40,20 +46,24 @@ const patternKey = (re: RegExp): string => `${re.source} ${re.flags}`
 const base = getAdConfig()
 const baseKeywords: readonly string[] = base.keywords
 const baseStrongKeywords: readonly string[] = base.strongKeywords
+const baseVariants: Readonly<Record<string, readonly string[]>> = base.variantKeywords
 const basePatterns: readonly RegExp[] = base.patterns
 const baseContactPatterns: readonly RegExp[] = base.contactPatterns
 
 /** Active lists (config/ad.json ∪ last good remote). Swapped atomically on refresh. */
 let activeKeywords: readonly string[] = baseKeywords
 let activeStrongKeywords: readonly string[] = baseStrongKeywords
+let activeVariants: Readonly<Record<string, readonly string[]>> = baseVariants
 let activePatterns: readonly RegExp[] = basePatterns
 let activeContactPatterns: readonly RegExp[] = baseContactPatterns
-let activeMatcher: CompiledKeywords = compileKeywords(activeKeywords, activeStrongKeywords)
+let activeMatcher: CompiledKeywords = compileKeywords(activeKeywords, activeStrongKeywords, activeVariants)
 
 /** The general keyword list (weak terms; never flag alone). */
 export const getAdKeywords = (): readonly string[] => activeKeywords
 /** The high-signal keyword list (a flag requires at least one hit here). */
 export const getAdStrongKeywords = (): readonly string[] => activeStrongKeywords
+/** Variant words (变种词): canonical keyword → its deliberately-obfuscated forms. */
+export const getAdVariantKeywords = (): Readonly<Record<string, readonly string[]>> => activeVariants
 /** Precompiled keyword matcher the detector scans messages with. */
 export const getAdKeywordMatcher = (): CompiledKeywords => activeMatcher
 /** The *offer* patterns the detector hard-flags on (config `patterns`). */
@@ -65,27 +75,31 @@ export const getAdContactPatterns = (): readonly RegExp[] => activeContactPatter
 export function resetAdRules(): void {
   activeKeywords = baseKeywords
   activeStrongKeywords = baseStrongKeywords
+  activeVariants = baseVariants
   activePatterns = basePatterns
   activeContactPatterns = baseContactPatterns
-  activeMatcher = compileKeywords(activeKeywords, activeStrongKeywords)
+  activeMatcher = compileKeywords(activeKeywords, activeStrongKeywords, activeVariants)
 }
 
 /**
- * Parse the merged rules file into keyword/strong/pattern lists. Section
- * headers `[keywords]` / `[strong]` / `[patterns]` (case-insensitive) route the
- * lines that follow; lines outside a known section are reported as skipped.
+ * Parse the merged rules file into keyword/strong/variant/pattern lists.
+ * Section headers `[keywords]` / `[strong]` / `[variants]` / `[patterns]`
+ * (case-insensitive) route the lines that follow; lines outside a known section
+ * are reported as skipped. `[variants]` lines are `原词=变种1|变种2`.
  */
 export function parseAdRules(body: string): {
   keywords: string[]
   strongKeywords: string[]
+  variants: Record<string, string[]>
   patterns: RegExp[]
   skipped: string[]
 } {
   const keywordLines: string[] = []
   const strongLines: string[] = []
+  const variantLines: string[] = []
   const patternLines: string[] = []
   const skipped: string[] = []
-  let section: 'keywords' | 'strong' | 'patterns' | null = null
+  let section: 'keywords' | 'strong' | 'variants' | 'patterns' | null = null
 
   for (const line of body.replace(/^﻿/, '').split(/\r?\n/)) {
     const trimmed = line.trim()
@@ -94,7 +108,7 @@ export function parseAdRules(body: string): {
     const header = /^\[([a-zA-Z]+)\]$/.exec(trimmed)
     if (header) {
       const name = header[1].toLowerCase()
-      if (name === 'keywords' || name === 'strong' || name === 'patterns') section = name
+      if (name === 'keywords' || name === 'strong' || name === 'variants' || name === 'patterns') section = name
       else {
         section = null
         skipped.push(`[${header[1]}] (unknown section)`)
@@ -104,35 +118,67 @@ export function parseAdRules(body: string): {
 
     if (section === 'keywords') keywordLines.push(trimmed)
     else if (section === 'strong') strongLines.push(trimmed)
+    else if (section === 'variants') variantLines.push(trimmed)
     else if (section === 'patterns') patternLines.push(trimmed)
-    else skipped.push(`${trimmed} (outside a [keywords]/[strong]/[patterns] section)`)
+    else skipped.push(`${trimmed} (outside a [keywords]/[strong]/[variants]/[patterns] section)`)
   }
 
   const keywords = parseKeywordList(keywordLines.join('\n'))
   const strongKeywords = parseKeywordList(strongLines.join('\n'))
+  const variants = parseVariantLines(variantLines, skipped)
   const patterns = parsePatternList(patternLines.join('\n'))
   return {
     keywords,
     strongKeywords,
+    variants,
     patterns: patterns.items,
     skipped: [...skipped, ...patterns.skipped],
   }
 }
 
+/** Parse `[variants]` lines: `canonical=variant1|variant2`. Invalid lines are
+ *  reported via `skipped`; forms are validated like keywords (2..64 chars). */
+function parseVariantLines(
+  lines: string[],
+  skipped: string[],
+): Record<string, string[]> {
+  const variants: Record<string, string[]> = {}
+  for (const line of lines) {
+    const eq = line.indexOf('=')
+    const canon = eq > 0 ? line.slice(0, eq).trim() : ''
+    const forms = eq > 0 ? parseVariantForms(line.slice(eq + 1).split(/[|,]/)) : []
+    if (!canon || forms.length === 0) {
+      skipped.push(`${line} (expected 原词=变种1|变种2, forms 2..64 chars)`)
+      continue
+    }
+    variants[canon] = [...new Set([...(variants[canon] ?? []), ...forms])]
+  }
+  return variants
+}
+
 const file = new RemoteFile({
   name: 'ad-rules',
   apply: (body) => {
-    const { keywords, strongKeywords, patterns, skipped } = parseAdRules(body)
+    const { keywords, strongKeywords, variants, patterns, skipped } = parseAdRules(body)
     // Union each remote slice with the config/ad.json baseline, deduped; swap
     // in one assignment. Strong terms are also general keywords, so they count
-    // toward the hit total.
+    // toward the hit total. Remote variant forms append to (not replace) the
+    // baseline forms for the same canonical keyword.
     activeKeywords = [...new Set([...baseKeywords, ...keywords, ...strongKeywords])]
     activeStrongKeywords = [...new Set([...baseStrongKeywords, ...strongKeywords])]
+    const mergedVariants: Record<string, string[]> = {}
+    for (const [canon, forms] of Object.entries(baseVariants)) {
+      mergedVariants[canon] = [...new Set([...forms, ...(variants[canon] ?? [])])]
+    }
+    for (const [canon, forms] of Object.entries(variants)) {
+      if (!(canon in mergedVariants)) mergedVariants[canon] = forms
+    }
+    activeVariants = mergedVariants
     const merged = new Map<string, RegExp>()
     for (const re of basePatterns) merged.set(patternKey(re), re)
     for (const re of patterns) merged.set(patternKey(re), re)
     activePatterns = [...merged.values()]
-    activeMatcher = compileKeywords(activeKeywords, activeStrongKeywords)
+    activeMatcher = compileKeywords(activeKeywords, activeStrongKeywords, activeVariants)
     return { parsed: keywords.length + strongKeywords.length + patterns.length, skipped: skipped.length }
   },
 })

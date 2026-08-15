@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { detectAd } from '../src/ad/detector'
+import { analyzeAd, detectAd } from '../src/ad/detector'
 import { getAdSettings } from '../src/ad/settings'
 import { getAdContactPatterns, getAdKeywordMatcher, getAdPatterns, resetAdRules } from '../src/ad/rules'
 
@@ -178,9 +178,47 @@ describe('detectAd (driven by config/ad.json)', () => {
     assert.equal(detectAd('扫码进群', settings), null)
   })
 
+  it('a variant word (薇信) is a strong hit of its canonical keyword and flags with a pitch', () => {
+    // 薇信 is the 变种词 of 微信: it must score as a strong hit (微信 canonical)
+    // weighted by variantLr, so the message clears where plain 微信 would not.
+    const a = analyzeAd('加我薇信 优惠 先到先得', settings)
+    assert.equal(a.variantHits, 1)
+    const v = a.keywords.find((k) => k.variant)
+    assert.ok(v, 'the 薇信 hit should be marked as a variant')
+    assert.equal(v!.keyword, '微信')
+    assert.ok(v!.lr > settings.bayes.strongLr, `variant LR ${v!.lr} should exceed strongLr ${settings.bayes.strongLr}`)
+    assert.ok(a.flagged)
+  })
+
+  it('a lone variant word does not flag (the co-occurrence floor still applies)', () => {
+    // One variant hit is a strong signal but not a structured ad by itself.
+    assert.equal(detectAd('加我薇信', settings), null)
+    assert.equal(detectAd('扣扣号', settings), null)
+    assert.equal(detectAd('菠菜', settings), null)
+  })
+
+  it('a variant maps to its canonical keyword in the returned hit list', () => {
+    const hit = detectAd('菠菜 上分 联系我', settings)
+    assert.ok(hit, '菠菜 (variant of 博彩) + 上分 + 联系 should flag')
+    assert.ok(hit.keywords.includes('博彩'), `expected canonical 博彩 in ${hit.keywords.join(', ')}`)
+    assert.ok(hit.reason.includes('variant=1'))
+  })
+
+  it('a variant boosts the score above the same canonical keyword written plainly', () => {
+    const pad = '的'.repeat(settings.bayes.chatLength)
+    const variant = analyzeAd(`加我薇信 优惠 先到先得 ${pad}`, settings)
+    const plain = analyzeAd(`加我微信 优惠 先到先得 ${pad}`, settings)
+    assert.ok(variant.flagged && plain.flagged)
+    assert.ok(
+      variant.probability > plain.probability,
+      `variant ${variant.probability.toFixed(2)} should score above plain ${plain.probability.toFixed(2)}`,
+    )
+  })
+
   it('resetAdRules restores the config base', () => {
     resetAdRules()
     const matcher = getAdKeywordMatcher()
     assert.ok(matcher.size >= 100)
+    assert.ok(matcher.variants.get('薇信') === '微信')
   })
 })

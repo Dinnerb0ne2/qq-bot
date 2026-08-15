@@ -223,6 +223,7 @@ of truth. Edit it at runtime, no source changes needed:
   "threshold": 0.6,           // P(ad|text) at which a message is flagged
   "strongLr": 40,             // likelihood ratio of a strong keyword hit
   "weakLr": 2.5,              // likelihood ratio of a generic keyword hit
+  "variantLr": 2,             // 变种词权重: a matched variant word is a strong hit, × this
   "lengthLr": 0.35,           // length-evidence growth per ln(1 + len/chatLength)
   "chatLength": 10,           // reference chat-message length: dampening ends here, length evidence grows beyond
   "maxLengthLr": 0.5,         // cap on the length-evidence term — length can tip, never decide
@@ -237,9 +238,18 @@ of truth. Edit it at runtime, no source changes needed:
   "keywords": ["促销", "代购"],
   "strongKeywords": ["加V", "扫码"],
   "keywordLrs": { "刷单": 100, "押题": 80 },  // per-keyword intensity (违禁强度)
+  "variantKeywords": { "微信": ["薇信", "威信"], "QQ": ["扣扣"] },  // 变种词
   "patterns": ["/加[V微]信?\\s*\\w+/"]
 }
 ```
+
+**Variant words (变种词).** Ads actively dodge filters by misspelling their hook —
+`微信` → `薇信`, `QQ` → `扣扣`, `博彩` → `菠菜`. List them under
+`variantKeywords` (`canonical → [obfuscated forms]`); the remote rules file can
+also add them via a `[variants]` section (`微信=薇信|威信`). A matched variant is
+scored as a **strong hit of its canonical keyword** (so `keywordLrs`/strong-class
+LRs carry over — `菠菜` inherits `博彩`'s weight) multiplied by the
+`variantLr` weight: deliberately hiding a hook is itself ad evidence.
 
 A missing or corrupt file (or an invalid field) falls back to the bundled
 defaults in `src/ad/`, and the bot logs what it dropped at startup. Override the
@@ -256,6 +266,10 @@ still unioned as an optional live-update layer, refreshed every
 [strong]
 加V
 扫码
+
+[variants]
+微信=薇信|威信|vx
+博彩=菠菜|bo彩
 
 [patterns]
 拉[你您]进[群裙]

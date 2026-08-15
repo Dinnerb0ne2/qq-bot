@@ -27,6 +27,11 @@
  * keyword in a very long post, or a bare recommendation link never flag — they
  * only interact with each other. High-signal contact/promo *patterns* (e.g.
  * `加V:abc123`) still flag on their own.
+ *
+ * A **variant word** (变种词 — 薇信 for 微信, 扣扣 for QQ, 菠菜 for 博彩; the
+ * `variantKeywords` map) is a deliberate obfuscation and counts as a *strong*
+ * hit of the canonical keyword it maps to, weighted by `variantLr`: an ad that
+ * hides its hook is far likelier an ad than one that states it plainly.
  */
 
 import { adLogOdds, adProbability, adShortScale, type AdHit } from './bayes'
@@ -64,6 +69,9 @@ export interface AdKeywordDetail {
   count: number
   /** High-signal (strong) term. */
   strong: boolean
+  /** True when the matched text is a deliberate variant (变种词) of `keyword` —
+   *  scored as strong with its LR multiplied by `bayes.variantLr`. */
+  variant: boolean
   /** Effective likelihood ratio used: per-keyword override, else class LR. */
   lr: number
   /** Scalar applied to ln(lr): repeatDiminish^(count-1) × weak diminishing. */
@@ -92,6 +100,9 @@ export interface AdAnalysis {
   features: AdFeatures
   /** Distinct keyword hits found (across general + strong lists). */
   keywordHits: number
+  /** Distinct *variant* words found (变种词 — 薇信, 扣扣, 菠菜…). Each is a
+   *  strong hit of its canonical keyword, × `bayes.variantLr`. */
+  variantHits: number
   /** Configured minimum distinct hits for the keyword path to engage. */
   minKeywordHits: number
   /** True when a hit is strong or has a per-keyword LR override. */
@@ -154,7 +165,8 @@ export function detectAd(
   }
   if (a.trigger === 'keywords' && a.flagged) {
     const keywords = a.keywords.map((k) => k.keyword)
-    return { reason: `keywords=${a.keywordHits} p(ad)=${a.probability.toFixed(2)}`, keywords }
+    const variant = a.variantHits > 0 ? ` variant=${a.variantHits}` : ''
+    return { reason: `keywords=${a.keywordHits}${variant} p(ad)=${a.probability.toFixed(2)}`, keywords }
   }
   return null
 }
@@ -209,7 +221,7 @@ export function analyzeAd(
   // Clone the shared regex: exec() advances lastIndex, and the cached one is
   // global — mutating it would corrupt matching for other callers.
   const re = new RegExp(matcher.regex.source, matcher.regex.flags)
-  const hits = new Map<string, { count: number; strong: boolean }>()
+  const hits = new Map<string, { count: number; strong: boolean; variant: boolean }>()
   let m: RegExpExecArray | null
   while ((m = re.exec(text)) !== null) {
     if (m[0].length === 0) {
@@ -219,7 +231,7 @@ export function analyzeAd(
     const key = m[0].toLowerCase()
     const rec = hits.get(key)
     if (rec) rec.count++
-    else hits.set(key, { count: 1, strong: matcher.strong.has(key) })
+    else hits.set(key, { count: 1, strong: matcher.strong.has(key), variant: matcher.variants.has(key) })
   }
 
   const urls = classifyUrls(text, settings.safeUrlDomains, settings.suspiciousTlds)
@@ -230,26 +242,34 @@ export function analyzeAd(
   const keywordHits = hits.size
   let hardKeyword = false
   let keywordLogOdds = 0
+  let variantHits = 0
   let shortScale = 1
   let lengthLogOdds = 0
   const detail: AdKeywordDetail[] = []
 
   const scored = keywordHits >= settings.minKeywordHits || hasStructure
   if (scored) {
-    const adHits: (AdHit & { key: string; canonical: string })[] = []
+    const adHits: (AdHit & { key: string; canonical: string; variant: boolean })[] = []
     for (const [key, rec] of hits) {
       const canonical = matcher.canonical.get(key) ?? key
       adHits.push({
         key,
         canonical,
-        strong: rec.strong,
+        // A variant is deliberate obfuscation: always a strong hit, and it
+        // keeps the canonical keyword's LR override (e.g. 菠菜 keeps 博彩's).
+        strong: rec.strong || rec.variant,
+        variant: rec.variant,
         count: rec.count,
         lr: settings.keywordLrs.get(canonical),
       })
     }
     hardKeyword = adHits.some((h) => h.strong || h.lr !== undefined)
+    variantHits = adHits.filter((h) => h.variant).length
 
-    const lrOf = (h: AdHit): number => h.lr ?? (h.strong ? settings.bayes.strongLr : settings.bayes.weakLr)
+    const lrOf = (h: (typeof adHits)[number]): number => {
+      const base = h.lr ?? (h.strong ? settings.bayes.strongLr : settings.bayes.weakLr)
+      return h.variant ? base * settings.bayes.variantLr : base
+    }
     const ordered = [...adHits].sort((a, b) => lrOf(b) - lrOf(a))
     let genericSeen = 0
     for (const h of ordered) {
@@ -267,6 +287,7 @@ export function analyzeAd(
         keyword: h.canonical,
         count: h.count,
         strong: h.strong,
+        variant: h.variant,
         lr,
         weight,
         logOdds: contrib,
@@ -327,6 +348,7 @@ export function analyzeAd(
     contactHard,
     features,
     keywordHits,
+    variantHits,
     minKeywordHits: settings.minKeywordHits,
     hardKeyword,
     keywords: detail,

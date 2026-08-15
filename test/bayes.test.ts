@@ -124,4 +124,13 @@ describe('adLogOdds / adProbability', () => {
     const p = adProbability(adLogOdds(hits(['s'], ['w']), DEFAULT_AD_BAYES, 5))
     assert.ok(p < DEFAULT_AD_BAYES.threshold)
   })
+
+  it('a variant hit is weighed by variantLr on top of its class LR', () => {
+    const weak = adProbability(adLogOdds(hits(['w']), DEFAULT_AD_BAYES, 30))
+    const variant = adProbability(adLogOdds([{ strong: false, count: 1, variant: true }], DEFAULT_AD_BAYES, 30))
+    assert.ok(variant > weak, 'a weak variant must outscore the same weak keyword')
+    const strong = adProbability(adLogOdds(hits(['s']), DEFAULT_AD_BAYES, 30))
+    const strongVariant = adProbability(adLogOdds([{ strong: true, count: 1, variant: true }], DEFAULT_AD_BAYES, 30))
+    assert.ok(strongVariant > strong, 'a strong variant must outscore the same strong keyword')
+  })
 })

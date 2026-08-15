@@ -17,7 +17,10 @@
  * 1. Per-keyword intensity (违禁强度). Every keyword's LR comes from its class
  *    (strongLr / weakLr) unless config/ad.json gives it a dedicated override
  *    (`keywordLrs`), so operators can mark e.g. `代开发票` as far stronger than
- *    a generic `促销`.
+ *    a generic `促销`. A deliberate *variant* word (薇信 for 微信, 扣扣 for QQ,
+ *    菠菜 for 博彩 — the `variantKeywords` map) is obfuscation, itself a strong
+ *    ad signal: it always scores as a strong hit and is multiplied by
+ *    `variantLr` (the 变种词权重) on top of its canonical keyword's LR.
  * 2. Diminishing returns on generic hits. Distinct generic words are highly
  *    correlated (they all sit in the same ad templates), so the independence
  *    assumption over-counts them — the classic `客服 咨询 QQ 关注 考试…` false
@@ -64,6 +67,10 @@ export interface AdBayesParams {
   strongLr: number
   /** Likelihood ratio for a weak (generic) keyword hit. */
   weakLr: number
+  /** Variant-word weight (变种词权重): a deliberate spelling variant (薇信 for
+   *  微信, 扣扣 for QQ, 菠菜 for 博彩) scores as a strong hit with its canonical
+   *  keyword's LR multiplied by this factor — obfuscation is itself evidence. */
+  variantLr: number
   /** Length-evidence growth coefficient per ln(1 + len/chatLength). */
   lengthLr: number
   /** Reference length of everyday chat (chars) in the group. The length
@@ -138,6 +145,7 @@ export const DEFAULT_AD_BAYES: AdBayesParams = {
   threshold: 0.6,
   strongLr: 40,
   weakLr: 2.5,
+  variantLr: 2,
   lengthLr: 0.35,
   chatLength: 10,
   maxLengthLr: 0.5,
@@ -167,6 +175,9 @@ export interface AdHit {
   count: number
   /** Per-keyword likelihood-ratio override from config/ad.json, if any. */
   lr?: number
+  /** True when the matched text is a deliberate variant (薇信→微信, 扣扣→QQ).
+   *  A variant always scores as a strong hit, multiplied by `variantLr`. */
+  variant?: boolean
 }
 
 /**
@@ -210,7 +221,12 @@ export function adLogOdds(
   const priorLogit = Math.log(params.prior / (1 - params.prior))
   const known = length !== undefined
 
-  const lrOf = (h: AdHit): number => h.lr ?? (h.strong ? params.strongLr : params.weakLr)
+  const lrOf = (h: AdHit): number => {
+    const base = h.lr ?? (h.strong ? params.strongLr : params.weakLr)
+    // A deliberate variant is obfuscation — weigh it like a strong hit and
+    // multiply by the variant-word weight (变种词权重).
+    return h.variant ? base * params.variantLr : base
+  }
   const ordered = [...hits].sort((a, b) => lrOf(b) - lrOf(a))
 
   let evidence = 0

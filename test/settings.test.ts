@@ -18,11 +18,13 @@ describe('parseAdConfig', () => {
         weakDiminish: 2,
         suspiciousUrlLr: 12,
         suspiciousTldLr: 5,
+        variantLr: 4,
         pitchLr: 35,
         minKeywordHits: 3,
         safeUrlDomains: ['jd.com', 'bilibili.com'],
         suspiciousTlds: ['.top', '.xyz'],
         keywordLrs: { 贷款: 80, 押题: 60 },
+        variantKeywords: { 微信: ['薇信', '威心'] },
         keywords: ['促销', '代购'],
         strongKeywords: ['加V', '扫码'],
         patterns: ['/加[V微]信?\\s*\\w+/', '/拉[你您]进[群裙]/'],
@@ -45,11 +47,13 @@ describe('parseAdConfig', () => {
     assert.equal(cfg.settings.bayes.weakDiminish, 2)
     assert.equal(cfg.settings.bayes.suspiciousUrlLr, 12)
     assert.equal(cfg.settings.bayes.suspiciousTldLr, 5)
+    assert.equal(cfg.settings.bayes.variantLr, 4)
     assert.equal(cfg.settings.bayes.pitchLr, 35)
     assert.deepEqual(cfg.settings.safeUrlDomains, ['jd.com', 'bilibili.com'])
     assert.deepEqual(cfg.settings.suspiciousTlds, ['top', 'xyz'])
     assert.equal(cfg.settings.keywordLrs.get('贷款'), 80)
     assert.equal(cfg.settings.keywordLrs.get('押题'), 60)
+    assert.deepEqual(cfg.variantKeywords.微信, ['薇信', '威心'])
   })
 
   it('falls back to bundled defaults on invalid JSON', () => {
@@ -123,6 +127,34 @@ describe('parseAdConfig', () => {
     const cfg = parseAdConfig(JSON.stringify({ patterns: ['(unclosed', '[z-a]'] }))
     assert.equal(cfg.patterns.length, 0)
     assert.ok(cfg.notes.some((n) => n.startsWith('pattern skipped')))
+  })
+
+  it('a present variantKeywords object replaces the bundled defaults', () => {
+    const cfg = parseAdConfig(JSON.stringify({ variantKeywords: { 微信: ['薇信', '威心'], QQ: ['扣扣'] } }))
+    assert.deepEqual(Object.keys(cfg.variantKeywords).sort(), ['QQ', '微信'])
+    assert.deepEqual(cfg.variantKeywords.微信, ['薇信', '威心'])
+    assert.deepEqual(cfg.variantKeywords.QQ, ['扣扣'])
+  })
+
+  it('keeps the bundled variant defaults when variantKeywords is invalid', () => {
+    const cfg = parseAdConfig(JSON.stringify({ variantKeywords: '薇信' }))
+    assert.ok(cfg.variantKeywords.微信.includes('薇信'), 'bundled defaults kept')
+    assert.ok(cfg.notes.some((n) => n.includes('variantKeywords')))
+  })
+
+  it('filters invalid variant forms and reports canonicals left empty', () => {
+    const cfg = parseAdConfig(
+      JSON.stringify({ variantKeywords: { 微信: ['薇', '薇信', 42], QQ: ['', 7, 'x'.repeat(65)] } }),
+    )
+    assert.deepEqual(cfg.variantKeywords.微信, ['薇信'], 'valid forms survive, junk is filtered')
+    assert.equal('QQ' in cfg.variantKeywords, false, 'a canonical with no valid forms is dropped')
+    assert.ok(cfg.notes.some((n) => n.includes('variantKeywords[QQ]')))
+  })
+
+  it('keeps the default variantLr when out of range', () => {
+    const cfg = parseAdConfig(JSON.stringify({ variantLr: 0.5 }))
+    assert.equal(cfg.settings.bayes.variantLr, 2)
+    assert.ok(cfg.notes.some((n) => n.includes('variantLr')))
   })
 })
 

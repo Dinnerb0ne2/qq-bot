@@ -38,14 +38,16 @@ const sign = (n: number): string => (n >= 0 ? '+' : '')
 
 function keywordTable(a: AdAnalysis): string[] {
   const lines: string[] = []
-  lines.push(`  ${pad('匹配词', 12)}${pad('次数', 4)}${pad('strong', 8)}${pad('LR', W)}${pad('权重', W)}${pad('贡献log-odds', 14)}`)
+  lines.push(`  ${pad('匹配词', 12)}${pad('次数', 4)}${pad('strong', 8)}${pad('变种', 6)}${pad('LR', W)}${pad('权重', W)}${pad('贡献log-odds', 14)}`)
   for (const k of a.keywords) {
     lines.push(
       `  ${pad(k.keyword, 12)}${pad(String(k.count), 4)}${pad(k.strong ? '是' : '否', 8)}` +
-        `${pad(k.lr.toFixed(1), W)}${pad(k.weight.toFixed(4), W)}${sign(k.logOdds)}${k.logOdds.toFixed(4)}`,
+        `${pad(k.variant ? '是' : '', 6)}${pad(k.lr.toFixed(1), W)}${pad(k.weight.toFixed(4), W)}${sign(k.logOdds)}${k.logOdds.toFixed(4)}`,
     )
   }
   lines.push(`  小计(缩放前): ${sign(a.keywordLogOdds)}${a.keywordLogOdds.toFixed(4)}`)
+  if (a.variantHits > 0)
+    lines.push(`  变种词 ${a.variantHits} 个 — 按 strong 计, 并乘以变种词权重 variantLr`)
   if (a.shortScale !== 1)
     lines.push(`  长度短消息衰减 shortScale=${a.shortScale.toFixed(4)} → 缩放后 ${sign(a.keywordLogOdds * a.shortScale)}${(a.keywordLogOdds * a.shortScale).toFixed(4)}`)
   return lines

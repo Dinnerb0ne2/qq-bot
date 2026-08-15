@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { compileKeywords, parseKeywordList } from '../src/ad/keywords'
+import { compileKeywords, parseKeywordList, parseVariantForms } from '../src/ad/keywords'
 
 /** The compiled matcher regex is global (stateful lastIndex) — clone it per
  *  check, exactly like the detector does, so assertions are independent. */
@@ -54,6 +54,34 @@ describe('compileKeywords', () => {
     const { size } = compileKeywords(['咨询'], ['加V'])
     assert.equal(size, 2)
   })
+
+  it('compiles variant words and maps them to their canonical keyword', () => {
+    const { regex, canonical, variants, size } = compileKeywords(
+      ['微信'],
+      [],
+      { 微信: ['薇信', '威心'], QQ: ['扣扣'] },
+    )
+    assert.equal(size, 4) // 微信 + 2 variants + 扣扣
+    assert.equal(canonical.get('薇信'), '微信')
+    assert.equal(canonical.get('扣扣'), 'QQ')
+    assert.equal(variants.get('薇信'), '微信')
+    assert.equal(variants.get('扣扣'), 'QQ')
+    assert.equal(matches('薇信', regex), true)
+    assert.equal(matches('加我扣扣号', regex), true)
+  })
+
+  it('drops out-of-range variant forms (single char / over-long)', () => {
+    const { variants, regex } = compileKeywords(['微信'], [], { 微信: ['薇', '薇信', 'x'.repeat(65)] })
+    assert.equal(variants.has('薇'), false)
+    assert.equal(variants.has('x'.repeat(65)), false)
+    assert.equal(variants.has('薇信'), true)
+    assert.equal(matches('薇', regex), false)
+  })
+
+  it('a variant that collides with a general keyword still maps to the canonical', () => {
+    const { variants } = compileKeywords(['扣扣'], [], { QQ: ['扣扣'] })
+    assert.equal(variants.get('扣扣'), 'QQ')
+  })
 })
 
 describe('parseKeywordList', () => {
@@ -65,5 +93,12 @@ describe('parseKeywordList', () => {
   it('stops at the hard cap', () => {
     const words = parseKeywordList(Array.from({ length: 100_010 }, (_, i) => `词${i}`).join('\n'))
     assert.equal(words.length, 100_000)
+  })
+})
+
+describe('parseVariantForms', () => {
+  it('trims, dedupes and drops out-of-range forms', () => {
+    assert.deepEqual(parseVariantForms([' 薇信 ', '薇信', '薇', 'x'.repeat(65)]), ['薇信'])
+    assert.deepEqual(parseVariantForms(['扣扣', '秋秋']), ['扣扣', '秋秋'])
   })
 })

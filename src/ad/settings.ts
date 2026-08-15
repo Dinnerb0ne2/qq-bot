@@ -14,7 +14,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { DEFAULT_AD_BAYES, type AdBayesParams } from './bayes'
-import { BUILTIN_AD_KEYWORDS, BUILTIN_STRONG_AD_KEYWORDS, parseKeywordList } from './keywords'
+import { BUILTIN_AD_KEYWORDS, BUILTIN_STRONG_AD_KEYWORDS, parseKeywordList, parseVariantForms, BUILTIN_VARIANT_KEYWORDS } from './keywords'
 import { BUILTIN_AD_PATTERNS, BUILTIN_CONTACT_AD_PATTERNS, parsePatternList } from './patterns'
 import { DEFAULT_SAFE_URL_DOMAINS, DEFAULT_SUSPICIOUS_TLDS } from './urls'
 
@@ -38,6 +38,8 @@ export interface AdSettings {
 export interface LoadedAdConfig {
   keywords: string[]
   strongKeywords: string[]
+  /** Deliberate variant words (变种词): canonical keyword → [variant forms]. */
+  variantKeywords: Record<string, string[]>
   patterns: RegExp[]
   contactPatterns: RegExp[]
   settings: AdSettings
@@ -72,6 +74,10 @@ export function parseAdConfig(body: string): LoadedAdConfig {
   const notes: string[] = []
   const keywords: string[] = [...BUILTIN_AD_KEYWORDS]
   const strongKeywords: string[] = [...BUILTIN_STRONG_AD_KEYWORDS]
+  const variantKeywords: Record<string, string[]> = {}
+  for (const [canon, forms] of Object.entries(BUILTIN_VARIANT_KEYWORDS)) {
+    variantKeywords[canon] = [...forms]
+  }
   const patterns: RegExp[] = [...BUILTIN_AD_PATTERNS]
   const contactPatterns: RegExp[] = [...BUILTIN_CONTACT_AD_PATTERNS]
   const settings: AdSettings = {
@@ -88,11 +94,17 @@ export function parseAdConfig(body: string): LoadedAdConfig {
     data = JSON.parse(body)
   } catch (err) {
     notes.push(`invalid JSON (${err instanceof Error ? err.message : String(err)}); using defaults`)
-    return { keywords, strongKeywords, patterns, contactPatterns, settings, source: 'defaults', notes }
+    return {
+      keywords, strongKeywords, variantKeywords, patterns, contactPatterns, settings,
+      source: 'defaults', notes,
+    }
   }
   if (typeof data !== 'object' || data === null || Array.isArray(data)) {
     notes.push('config root must be a JSON object; using defaults')
-    return { keywords, strongKeywords, patterns, contactPatterns, settings, source: 'defaults', notes }
+    return {
+      keywords, strongKeywords, variantKeywords, patterns, contactPatterns, settings,
+      source: 'defaults', notes,
+    }
   }
   const obj = data as Record<string, unknown>
 
@@ -119,6 +131,33 @@ export function parseAdConfig(body: string): LoadedAdConfig {
         strongKeywords.push(...parsed)
       }
     } else notes.push('strongKeywords: must be an array of strings; using defaults')
+  }
+
+  // Variant words (变种词): { canonical keyword: [obfuscated forms] }. A present
+  // object replaces the bundled baseline; invalid entries are dropped with notes.
+  const rawVariants = obj.variantKeywords
+  if (rawVariants !== undefined) {
+    if (typeof rawVariants === 'object' && rawVariants !== null && !Array.isArray(rawVariants)) {
+      const parsed: Record<string, string[]> = {}
+      let kept = 0
+      for (const [canon, forms] of Object.entries(rawVariants as Record<string, unknown>)) {
+        if (!Array.isArray(forms)) {
+          notes.push(`variantKeywords[${canon}]: must be an array of strings; dropped`)
+          continue
+        }
+        const valid = parseVariantForms(forms.filter((v): v is string => typeof v === 'string'))
+        if (valid.length === 0) notes.push(`variantKeywords[${canon}]: no valid forms (need 2..64 chars); dropped`)
+        else {
+          parsed[canon] = valid
+          kept++
+        }
+      }
+      if (kept === 0) notes.push('variantKeywords: no valid entries; keeping defaults')
+      else {
+        for (const key of Object.keys(variantKeywords)) delete variantKeywords[key]
+        Object.assign(variantKeywords, parsed)
+      }
+    } else notes.push('variantKeywords: must be an object { canonical: [variants] }; keeping defaults')
   }
 
   const rawPatterns = obj.patterns
@@ -166,6 +205,10 @@ export function parseAdConfig(body: string): LoadedAdConfig {
   const weakLr = num('weakLr')
   if (weakLr !== undefined && weakLr < LR_MIN) notes.push(`weakLr: ${weakLr} < ${LR_MIN}; keeping default`)
   else if (weakLr !== undefined) settings.bayes.weakLr = weakLr
+
+  const variantLr = num('variantLr')
+  if (variantLr !== undefined && variantLr < LR_MIN) notes.push(`variantLr: ${variantLr} < ${LR_MIN}; keeping default`)
+  else if (variantLr !== undefined) settings.bayes.variantLr = variantLr
 
   // Per-keyword intensity (违禁强度): keyword -> likelihood-ratio override.
   const rawLrs = obj.keywordLrs
@@ -273,7 +316,10 @@ export function parseAdConfig(body: string): LoadedAdConfig {
 
   settings.keywordLrs = keywordLrs
 
-  return { keywords, strongKeywords, patterns, contactPatterns, settings, source: 'file', notes }
+  return {
+    keywords, strongKeywords, variantKeywords, patterns, contactPatterns, settings,
+    source: 'file', notes,
+  }
 }
 
 /** Load config/ad.json if present; otherwise return the bundled defaults. */

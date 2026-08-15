@@ -7,5 +7,6 @@
 
 export { AntiAd } from './moderator'
 export { detectAd, analyzeAd, type AdMatch, type AdAnalysis, type AdKeywordDetail, type AdContext } from './detector'
-export { getAdKeywords, getAdContactPatterns, getAdPatterns, startAdRulesRefresh } from './rules'
+export { getAdKeywords, getAdVariantKeywords, getAdContactPatterns, getAdPatterns, startAdRulesRefresh } from './rules'
 export { getAdConfig, getAdSettings, type AdSettings, type LoadedAdConfig } from './settings'
+export { BUILTIN_VARIANT_KEYWORDS } from './keywords'

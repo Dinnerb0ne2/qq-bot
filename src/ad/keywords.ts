@@ -70,6 +70,41 @@ export const BUILTIN_STRONG_AD_KEYWORDS: readonly string[] = [
   '丰胸', '祛斑', '壮阳', '增高', '延时',
 ]
 
+/**
+ * Variant words (变种词): deliberately-obfuscated spellings of ad keywords that
+ * try to dodge the filter — 微信 → 薇信/威信, QQ → 扣扣/秋秋, 博彩 → 菠菜/bo彩,
+ * 冰毒 → 兵毒/bingdu, 海洛因 → 白粉/四号… The map is `canonical keyword →
+ * [variant forms]`. A matched variant counts as a hit of its canonical keyword
+ * (so keywordLrs/strong classes carry over) and is scored as a strong hit,
+ * multiplied by the `variantLr` weight (变种词权重) — obfuscation itself is ad
+ * evidence.
+ *
+ * These are the *fallback* defaults: config/ad.json (settings.ts) is the single
+ * source of truth and replaces them; rules.ts unions remote `[variants]` lines
+ * on top.
+ */
+export const BUILTIN_VARIANT_KEYWORDS: Readonly<Record<string, readonly string[]>> = {
+  // Contact-method obfuscations
+  微信: ['薇信', '威信', '威心', '薇❤信', '微❤信', 'V信', 'vx'],
+  QQ: ['扣扣', '秋秋', '球球', '企鹅号'],
+  // Gambling (博彩/彩票/棋牌/六合彩/赌博/斗地主/龙虎)
+  博彩: ['菠菜', '卜余', '波菜', 'bo彩'],
+  彩票: ['财票'],
+  棋牌: ['棋排', 'qp'],
+  六合彩: ['六合', 'lh'],
+  赌博: ['赌搏', '堵薄', '独播', 'du博', 'dubo', 'dǔbó'],
+  斗地主: ['抖地主'],
+  龙虎: ['笼虎'],
+  // Drugs (冰毒/大麻/海洛因/K粉/麻古/摇头丸/可卡因)
+  冰毒: ['兵毒', '冰度', 'bing毒', 'bingdu'],
+  大麻: ['大嘛', 'dama', '大碼'],
+  海洛因: ['白粉', '白面', '四号', '四仔', '老四'],
+  K粉: ['k仔', 'k他命', '笳'],
+  麻古: ['麻果', '麻谷', '小麻'],
+  摇头丸: ['摇摇', 'mdma'],
+  可卡因: ['可可精'],
+}
+
 /** Ignore keywords shorter/longer than these to avoid over-matching and junk. */
 const MIN_KEYWORD_LENGTH = 2
 const MAX_KEYWORD_LENGTH = 64
@@ -92,33 +127,51 @@ export interface CompiledKeywords {
    *  Alternatives are sorted longest-first so the most specific phrase wins at
    *  any position. Callers must clone it before using exec()/lastIndex. */
   readonly regex: RegExp
-  /** Lowercase matched text → canonical keyword (for logs). */
+  /** Lowercase matched text → canonical keyword (for logs). A matched variant
+   *  maps to the keyword it obfuscates (薇信 → 微信). */
   readonly canonical: ReadonlyMap<string, string>
   /** Lowercase high-signal keywords; a flag requires at least one of these. */
   readonly strong: ReadonlySet<string>
+  /** Lowercase variant form → canonical keyword it obfuscates. A hit here is a
+   *  deliberate variant (变种词) and scores as a strong hit × `variantLr`. */
+  readonly variants: ReadonlyMap<string, string>
   /** Total unique keywords compiled. */
   readonly size: number
 }
 
 /**
- * Merge the general and strong keyword lists into one matcher: deduped,
- * longest-first alternation with case-insensitive matching and word boundaries
- * around short ASCII tokens.
+ * Merge the general, strong and variant keyword lists into one matcher:
+ * deduped, longest-first alternation with case-insensitive matching and word
+ * boundaries around short ASCII tokens. Variant forms map to the canonical
+ * keyword they obfuscate via `variants` / `canonical`.
  */
 export function compileKeywords(
   general: readonly string[],
   strong: readonly string[],
+  variants?: Readonly<Record<string, readonly string[]>>,
 ): CompiledKeywords {
   const strongKeys = new Set(strong.map((k) => k.toLowerCase()))
+  const variantsMap = new Map<string, string>()
   const canonical = new Map<string, string>()
-  const parts: string[] = []
-  // Strong terms are also general keywords, so count them toward the hit total.
-  const all = [...new Set([...strong, ...general])].sort((a, b) => b.length - a.length)
+  const all = new Set<string>()
+  for (const kw of strong) all.add(kw)
+  for (const kw of general) all.add(kw)
+  if (variants) {
+    for (const [canon, forms] of Object.entries(variants)) {
+      for (const form of forms) {
+        const f = form.trim()
+        if (f.length < MIN_KEYWORD_LENGTH || f.length > MAX_KEYWORD_LENGTH) continue
+        all.add(f)
+        variantsMap.set(f.toLowerCase(), canon)
+      }
+    }
+  }
 
-  for (const kw of all) {
+  const parts: string[] = []
+  for (const kw of [...all].sort((a, b) => b.length - a.length)) {
     const key = kw.toLowerCase()
     if (canonical.has(key)) continue
-    canonical.set(key, kw)
+    canonical.set(key, variantsMap.get(key) ?? kw)
     const escaped = escapeRegExp(kw)
     parts.push(SHORT_ASCII.test(kw) ? `\\b${escaped}\\b` : escaped)
   }
@@ -127,6 +180,7 @@ export function compileKeywords(
     regex: new RegExp(parts.join('|'), 'gi'),
     canonical,
     strong: strongKeys,
+    variants: variantsMap,
     size: canonical.size,
   }
 }
@@ -145,4 +199,19 @@ export function parseKeywordList(raw: string): string[] {
     if (out.length >= MAX_KEYWORDS) break
   }
   return out
+}
+
+/**
+ * Validate variant forms: trimmed, deduped, in-range (they need at least 2
+ * chars — single-char variants like 冰 would over-match everyday words).
+ */
+export function parseVariantForms(forms: readonly string[]): string[] {
+  const out: string[] = []
+  for (const form of forms) {
+    const f = form.trim()
+    if (f.length < MIN_KEYWORD_LENGTH || f.length > MAX_KEYWORD_LENGTH) continue
+    out.push(f)
+    if (out.length >= MAX_KEYWORDS) break
+  }
+  return [...new Set(out)]
 }

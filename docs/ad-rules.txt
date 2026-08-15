@@ -15,6 +15,14 @@
 #             the stateful g/y flags are dropped.
 #             WARNING: patterns run on every message with no timeout. Avoid
 #             nested quantifiers like (a+)+ which can hang the bot (ReDoS).
+# [variants]  variant words (变种词): one line per canonical keyword, mapping
+#             deliberately-obfuscated spellings to the real keyword. A matched
+#             variant is scored as a strong hit of the canonical keyword and
+#             multiplied by the variantLr weight (变种词权重) — obfuscation is
+#             itself ad evidence. Format: 原词=变种1|变种2|...
+#             微信=薇信|威信|vx
+#             博彩=菠菜|bo彩
+#             These append to (not replace) the config/ad.json variantKeywords.
 #
 # Tuning: the forbidden words, intensity and probability params live in
 # config/ad.json (raise threshold or minKeywordHits for fewer flags, lower them
