@@ -90,24 +90,26 @@ function render(text: string, settings: ModerationSettings): void {
   ].filter(Boolean)
   console.log(`\n[结构特征] ${feats.length ? feats.join(', ') : '(无)'}${a.reply ? '  回复上一条' : ''}`)
 
-  if (a.trigger === 'pattern') {
-    console.log(`\n[模式命中] (强信号正则, 直接判定) 类别: ${a.category}`)
-    for (const p of a.patterns) console.log(`  /${p}/`)
-    for (const p of a.contactPatterns) console.log(`  /${p}/ (contact${a.contactHard ? '' : ', 软证据'})`)
+  console.log(`\n[关键词命中] ${a.keywordHits} 个不同词 (minKeywordHits=${a.minKeywordHits})`)
+  if (a.patterns.length > 0) {
+    console.log(`  [offer 模式] ${a.patterns.length} 条 (强结构证据, 需与其它证据共现)`)
+    for (const p of a.patterns) console.log(`    /${p}/`)
+  }
+  if (a.contactPatterns.length > 0) {
+    console.log(`  [contact 模式] ${a.contactPatterns.length} 条 (仅为软证据, 不单独判定)`)
+    for (const p of a.contactPatterns) console.log(`    /${p}/`)
+  }
+  if (a.keywords.length > 0) {
+    console.log(keywordTable(a).join('\n'))
+    console.log(`  强信号词(strong/高LR): ${a.hardKeyword ? '是' : '否'}`)
+    const evi = Object.entries(a.categoryEvidence).filter(([, n]) => n > 0)
+    if (evi.length) console.log(`  [违禁类别] ${evi.map(([c, n]) => `${c}×${n}`).join(', ')} → 命中: ${a.category}`)
+    const softOnly =
+      !a.hardKeyword && a.patternLogOdds === 0 && !a.features.code && !a.features.service &&
+      !a.features.price && !a.features.register && !a.features.cta && !a.features.pitch
+    if (softOnly) console.log('  无 strong 词/offer 模式/促销结构 → 违禁特征未共现, 不进关键词评分')
   } else {
-    console.log(`\n[关键词命中] ${a.keywordHits} 个不同词 (minKeywordHits=${a.minKeywordHits})`)
-    if (a.keywords.length > 0) {
-      console.log(keywordTable(a).join('\n'))
-      console.log(`  强信号词(strong/高LR): ${a.hardKeyword ? '是' : '否'}`)
-      const evi = Object.entries(a.categoryEvidence).filter(([, n]) => n > 0)
-      if (evi.length) console.log(`  [违禁类别] ${evi.map(([c, n]) => `${c}×${n}`).join(', ')} → 命中: ${a.category}`)
-      const softOnly =
-        !a.hardKeyword && !a.urls.some((u) => !u.benign) && !a.features.code && !a.features.service &&
-        !a.features.price && !a.features.register && !a.features.cta && !a.features.pitch
-      if (softOnly) console.log('  无 strong 词/可疑URL/促销结构 → 违禁特征未共现, 不进关键词评分')
-    } else {
-      console.log(`  未达到评分门槛, 跳过关键词评分`)
-    }
+    console.log(`  未达到评分门槛, 跳过关键词评分`)
   }
 
   console.log(`\n[URL]`)
@@ -121,6 +123,7 @@ function render(text: string, settings: ModerationSettings): void {
   if (a.contactLogOdds !== 0) console.log(`  contact    : ${sign(a.contactLogOdds)}${a.contactLogOdds.toFixed(4)}`)
   if (a.pitchLogOdds !== 0) console.log(`  pitch         : ${sign(a.pitchLogOdds)}${a.pitchLogOdds.toFixed(4)}${damp}`)
   if (a.structureLogOdds !== 0) console.log(`  construct     : ${sign(a.structureLogOdds)}${a.structureLogOdds.toFixed(4)}`)
+  if (a.patternLogOdds !== 0) console.log(`  offer pattern : ${sign(a.patternLogOdds)}${a.patternLogOdds.toFixed(4)}`)
   console.log(`  length        : ${sign(a.lengthLogOdds)}${a.lengthLogOdds.toFixed(4)}`)
   console.log(`  URL           : ${sign(a.urlLogOdds)}${a.urlLogOdds.toFixed(4)}`)
   console.log(`  log-odds      : ${sign(a.logOdds)}${a.logOdds.toFixed(4)}`)

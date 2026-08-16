@@ -48,8 +48,9 @@ export const BUILTIN_VIOLATION_KEYWORDS: readonly string[] = [
  * here: "加我私聊" alone is a normal private-chat invitation, not an ad. They
  * live in the general keyword list and only *reinforce* a real promo signal.
  * The detector only flags a message when it contains at least one *strong*
- * keyword (the pitch) or a suspicious URL; generic words — contact or otherwise
- * — never decide on their own.
+ * keyword (the pitch), an explicit promotion structure, or an offer pattern —
+ * and no single indicator (a URL, a lone contact pattern, a lone offer pattern)
+ * ever decides on its own; generic words — contact or otherwise — never do.
  *
  * This list is deliberately conservative: too generous and the false positives
  * come back. Prefer moving specific promo terms to the remote `[strong]`

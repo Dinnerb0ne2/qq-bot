@@ -67,9 +67,11 @@ export const getViolationStrongKeywords = (): readonly string[] => activeStrongK
 export const getViolationVariantKeywords = (): Readonly<Record<string, readonly string[]>> => activeVariants
 /** Precompiled keyword matcher the detector scans messages with. */
 export const getViolationKeywordMatcher = (): CompiledKeywords => activeMatcher
-/** The *offer* patterns the detector hard-flags on (config `patterns`). */
+/** The *offer* patterns (config `patterns`) — strong structural evidence, but a
+ *  single one never decides on its own. */
 export const getViolationPatterns = (): readonly RegExp[] => activePatterns
-/** The contact/hook patterns the detector length-gates (config `contactPatterns`). */
+/** The contact/hook patterns (config `contactPatterns`) — a single one is only
+ *  soft evidence; 2+ co-occurring hooks hard-flag. */
 export const getViolationContactPatterns = (): readonly RegExp[] => activeContactPatterns
 
 /** Reset all lists to the config/ad.json baseline (used by tests). */

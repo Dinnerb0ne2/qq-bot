@@ -18,16 +18,21 @@
  * not on the safe whitelist adds a modest LR of its own.
  *
  * A flag requires **violation features to co-occur** — no single indicator
- * decides on its own: the message must meet the distinct-hit floor AND either
- * contain a strong keyword (a promo/offer/urgency pitch — the thing being
- * advertised), a suspicious URL, or an explicit promotion structure (promo
- * code, price pitch, enrollment funnel, paid-service pitch, call-to-action,
- * or a pitch+contact cluster). Bare contact words (`加我 私聊 微信 …`) are
+ * decides on its own: the message must meet the distinct-hit floor AND contain
+ * a hard signal — a strong keyword (a promo/offer/urgency pitch — the thing
+ * being advertised), an explicit promotion structure (promo code, price pitch,
+ * enrollment funnel, paid-service pitch, call-to-action, a pitch+contact
+ * cluster), or an offer pattern. Bare contact words (`加我 私聊 微信 …`) are
  * general hits that only *reinforce* a real pitch; a pile of them alone
- * (`客服 咨询 QQ …`), a lone keyword in a very long post, or a bare
- * recommendation link never flag — they only interact with each other.
- * High-signal contact/promo *patterns* (e.g. `加V:abc123`) still flag on
- * their own.
+ * (`客服 咨询 QQ …`), a lone keyword in a very long post, a bare
+ * recommendation link, or a lone contact/offer pattern never flag — they only
+ * interact with each other.
+ *
+ * This is a hard rule: **no single variable ever decides on its own.** An
+ * *offer* pattern (a discount/group-buy/cloud-price regex), a lone *contact*
+ * pattern (加V:abc123), several contact methods, or a suspicious URL each
+ * contribute evidence, but none of them alone is enough to flag — the message
+ * must carry co-occurring evidence and clear the probability threshold.
  *
  * Every keyword carries a **violation category** (赌博 / 毒品 / 诈骗兼职 / 色情 /
  * 广告 — the `categories` section of config/ad.json; uncategorized words,
@@ -47,10 +52,6 @@ import { getViolationContactPatterns, getViolationKeywordMatcher, getViolationPa
 import { getModerationSettings, type ModerationSettings } from './settings'
 import { classifyUrls, type UrlEvidence } from './urls'
 import { DEFAULT_CATEGORY } from './keywords'
-
-/** A contact pattern matched inside a message longer than this is not a hard
- *  flag on its own — it becomes soft evidence (see analyzeViolation). */
-export const SHORT_PATTERN_LENGTH = 30
 
 /** Extra context about a message that shapes the violation judgment. */
 export interface ModerationContext {
@@ -98,15 +99,15 @@ export interface ViolationAnalysis {
   text: string
   /** Text length in chars. */
   length: number
-  /** Which path decided the outcome: a pattern, keyword scoring, or nothing. */
-  trigger: 'pattern' | 'keywords' | 'none'
-  /** Matched high-signal *offer* patterns (regex sources), in rule order. */
-  patterns: string[]
-  /** Matched contact/hook patterns (regex sources), in rule order. */
+  /** Matched contact/hook patterns (regex sources), in rule order. Contact
+   *  patterns are never a hard flag on their own — they only add soft evidence
+   *  (contact is a single evidence dimension regardless of how it's expressed). */
   contactPatterns: string[]
-  /** True when the contact patterns hard-flag on their own (short message, or
-   *  2+ matches). Otherwise a lone contact pattern is soft evidence. */
-  contactHard: boolean
+  /** Matched *offer* patterns (regex sources), in rule order. A single offer
+   *  pattern is strong structural evidence but never decides on its own. */
+  patterns: string[]
+  /** Distinct *offer* patterns matched (used for diminishing returns). */
+  patternHits: number
   /** Structural violation features found (code/price/register/service/cta) and
    *  the conversational dampeners (question/collab/chat) that apply. */
   features: ModerationFeatures
@@ -115,7 +116,8 @@ export interface ViolationAnalysis {
   /** Distinct *variant* words found (变种词 — 薇信, 扣扣, 菠菜…). Each is a
    *  strong hit of its canonical keyword, × `bayes.variantLr`. */
   variantHits: number
-  /** Configured minimum distinct hits for the keyword path to engage. */
+  /** Configured distinct-hit floor (informational — P is the sole decider, so
+   *  this no longer gates the keyword path). */
   minKeywordHits: number
   /** True when a hit is strong or has a per-keyword LR override. */
   hardKeyword: boolean
@@ -131,10 +133,15 @@ export interface ViolationAnalysis {
   priorLogit: number
   /** Sum of keyword ln(LR)×weight, before dampening and short-scaling. */
   keywordLogOdds: number
-  /** Soft evidence from a lone contact pattern in a long message. */
+  /** Soft evidence from matched contact patterns (never a hard flag on its own);
+   *  scaled with diminishing returns by how many co-occur. Dampened with the
+   *  soft keyword evidence. */
   contactLogOdds: number
   /** Sum of structural-feature ln(LR)s (code/price/register/service/cta). */
   structureLogOdds: number
+  /** Evidence from matched offer patterns (ln(patternLr) per distinct pattern,
+   *  with diminishing returns). Never dampened — patterns are structural. */
+  patternLogOdds: number
   /** Soft evidence from a pitch+contact cluster (团购…联系客服), dampened like
    *  keyword evidence. */
   pitchLogOdds: number
@@ -179,14 +186,7 @@ export function detectViolation(
   // analysis pipeline (features, keyword scan, URL scan).
   if (!text || /^\s*$/.test(text)) return null
   const a = analyzeViolation(text, settings, context)
-  if (a.trigger === 'pattern') {
-    return {
-      reason: `pattern:${a.patterns[0] ?? a.contactPatterns[0]}`,
-      keywords: [],
-      category: a.category,
-    }
-  }
-  if (a.trigger === 'keywords' && a.flagged) {
+  if (a.flagged) {
     const keywords = a.keywords.map((k) => k.keyword)
     const variant = a.variantHits > 0 ? ` variant=${a.variantHits}` : ''
     return {
@@ -225,21 +225,32 @@ export function analyzeViolation(
     (features.service ? Math.log(settings.bayes.serviceLr) : 0) +
     (features.cta ? Math.log(settings.bayes.ctaLr) : 0)
   const pitchLogOdds = features.pitch ? Math.log(settings.bayes.pitchLr) : 0
-  const hasStructure = structureLogOdds > 0 || features.pitch
 
-  // Offer patterns hard-flag on their own. Contact patterns hard-flag only when
-  // the message is short (nothing else it could be but the hook) or several
-  // co-occur; a lone one in a long message is soft evidence (contactLogOdds).
+  // Offer patterns (config `patterns`) are strong structural evidence, but a
+  // single one never decides on its own — it must co-occur with other evidence
+  // and clear the threshold. Each distinct pattern adds ln(patternLr) with
+  // diminishing returns on extras (a pile of overlapping patterns saturates).
   const patterns: string[] = []
   for (const pattern of getViolationPatterns()) {
     if (pattern.test(text)) patterns.push(pattern.source)
   }
+  const patternHits = patterns.length
+  let patternLogOdds = 0
+  for (let i = 0; i < patternHits; i++) {
+    patternLogOdds += Math.log(settings.bayes.patternLr) * Math.min(1, settings.bayes.weakDiminish / (i + 1))
+  }
+
+  // Contact patterns are never a hard flag on their own (no single variable
+  // decides): a message that only lists contact methods (加我qq 122976 和微信
+  // weixin120398) is not an ad without a pitch. Contact is a single evidence
+  // *dimension* — however many hooks/words express it, it is worth at most one
+  // ln(contactLr) of soft evidence (dampened like keywords), so a pile of
+  // contact info alone can never push P over the threshold.
   const contactMatches: string[] = []
   for (const pattern of getViolationContactPatterns()) {
     if (pattern.test(text)) contactMatches.push(pattern.source)
   }
-  const contactHard = contactMatches.length >= 2 || (contactMatches.length === 1 && length <= SHORT_PATTERN_LENGTH)
-  const contactLogOdds = !contactHard && contactMatches.length === 1 ? Math.log(settings.bayes.contactLr) : 0
+  const contactLogOdds = contactMatches.length > 0 ? Math.log(settings.bayes.contactLr) : 0
 
   // Keyword signal: scan once with the precompiled alternation regex, counting
   // occurrences per distinct keyword (repetition is evidence), then score the
@@ -273,7 +284,11 @@ export function analyzeViolation(
   const suspiciousUrl = urls.some((u) => !u.benign)
   const suspiciousTld = urls.some((u) => u.suspiciousTld)
 
-  // Score the hits the same way bayes.violationLogOdds does, but record each step.
+  // Score the hits the same way bayes.violationLogOdds does, but record each
+  // step. P (posterior probability) is the sole evaluation criterion, so every
+  // message is scored — there is no hit-floor or hard-signal gate. The priors,
+  // diminishing returns on generic hits, short-message dampening and capped
+  // length evidence keep innocent chat below the threshold on their own.
   const keywordHits = hits?.size ?? 0
   let hardKeyword = false
   let keywordLogOdds = 0
@@ -283,8 +298,7 @@ export function analyzeViolation(
   const detail: ViolationKeywordDetail[] = []
   let categoryEvidence: Readonly<Record<string, number>> = {}
 
-  const scored = keywordHits >= settings.minKeywordHits || hasStructure
-  if (scored) {
+  {
     const modHits: (ModerationHit & { key: string; canonical: string; variant: boolean })[] = []
     const catEvidence: Record<string, number> = {}
     if (hits) for (const [key, rec] of hits) {
@@ -294,9 +308,12 @@ export function analyzeViolation(
       modHits.push({
         key,
         canonical,
-        // A variant is deliberate obfuscation: always a strong hit, and it
-        // keeps the canonical keyword's LR override (e.g. 菠菜 keeps 博彩's).
-        strong: rec.strong || rec.variant,
+        // A variant is deliberate obfuscation — but it inherits its canonical
+        // keyword's *strength class* (× variantLr for the obfuscation boost).
+        // A variant of a weak contact word (扣扣→QQ) stays weak; a variant of a
+        // strong pitch/gambling word (菠菜→博彩) stays strong. Contact info is
+        // common chat and must never read as strong ad evidence on its own.
+        strong: rec.strong || matcher.strong.has(canonical),
         variant: rec.variant,
         count: rec.count,
         lr: settings.keywordLrs.get(canonical),
@@ -361,26 +378,20 @@ export function analyzeViolation(
     priorLogit +
     (keywordLogOdds + contactLogOdds + pitchLogOdds) * dampeningFactor * shortScale +
     structureLogOdds +
+    patternLogOdds +
     lengthLogOdds +
     urlLogOdds
   const probability = violationProbability(logOdds)
 
-  // Outcome: an offer pattern — or a hard contact-pattern — flags regardless of
-  // the score. The keyword path needs the violation features to co-occur (enough
-  // hits or a structure) AND a hard signal (strong keyword, suspicious URL, or
-  // any explicit promotion structure: promo code, paid service, price pitch,
-  // enrollment funnel, call-to-action, or a pitch+contact cluster), and the
-  // probability to clear the threshold.
-  let trigger: ViolationAnalysis['trigger']
-  if (patterns.length > 0 || contactHard) trigger = 'pattern'
-  else if (
-    (keywordHits >= settings.minKeywordHits || hasStructure) &&
-    (hardKeyword || suspiciousUrl || features.code || features.service || features.price ||
-      features.register || features.cta || features.pitch)
-  )
-    trigger = 'keywords'
-  else trigger = 'none'
-  const flagged = trigger === 'pattern' || (trigger === 'keywords' && probability >= settings.bayes.threshold)
+  // Outcome: **P (posterior probability) is the sole evaluation criterion.**
+  // There are no deterministic hard-flag paths and no hit-floor / hard-signal
+  // gates. Every evidence source — keywords, structural features, offer
+  // patterns, contact patterns, URLs, length — flows into the log-odds, and a
+  // message is recalled iff P ≥ threshold. The naive-Bayes calibration
+  // (priors, diminishing returns on generic/contact hits, short-message
+  // dampening, capped length) is what keeps innocent chat — a contact-only
+  // message, a lone keyword, a bare link — below the threshold on its own.
+  const flagged = probability >= settings.bayes.threshold
 
   // Winning category: the one with the most distinct keyword hits; ties resolve
   // to the first category in config order (matcher.categories), 广告 last.
@@ -397,10 +408,9 @@ export function analyzeViolation(
   return {
     text,
     length,
-    trigger,
     patterns,
+    patternHits,
     contactPatterns: contactMatches,
-    contactHard,
     features,
     keywordHits,
     variantHits,
@@ -415,6 +425,7 @@ export function analyzeViolation(
     contactLogOdds,
     pitchLogOdds,
     structureLogOdds,
+    patternLogOdds,
     dampeningFactor,
     reply,
     shortScale,

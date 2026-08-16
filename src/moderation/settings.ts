@@ -338,6 +338,7 @@ export function parseModerationConfig(body: string): LoadedModerationConfig {
     else if (v !== undefined) settings.bayes[name] = v as never
   }
   lrParam('contactLr')
+  lrParam('patternLr')
   lrParam('codeLr')
   lrParam('priceLr')
   lrParam('registerLr')

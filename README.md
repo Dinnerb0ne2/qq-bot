@@ -182,9 +182,11 @@ adds a **strike** against the sender (per group, in memory), and on reaching
 `AD_STRIKE_LIMIT` (default `3`) **replies once** asking an admin to remove the
 member.
 
-Detection combines two signals — **keywords** scored with a naive-Bayes model,
-and **regex patterns** (flag on a single match). Keyword hits are precompiled
-into one case-insensitive matcher; every distinct hit is evidence weighted by a
+Detection combines several signals — **keywords** scored with a naive-Bayes
+model, **offer/contact regex patterns**, **structural features** (promo code,
+price pitch, enrollment funnel, paid-service pitch, call-to-action, pitch+contact
+cluster) and **URL evidence**. Keyword hits are precompiled into one
+case-insensitive matcher; every distinct hit is evidence weighted by a
 likelihood ratio (strong terms weigh far more than generic ones) and combined
 with a prior base rate:
 
@@ -204,9 +206,14 @@ onward (`lengthLr·ln(1 + len/chatLength)`, capped at the modest `maxLengthLr`):
 no fixed 30-char cliff, and no amount of length can ever flag a message on its
 own. **No single indicator decides** — a flag requires violation features to
 co-occur: the message must meet the distinct-hit floor AND carry a strong
-keyword (or a per-keyword LR override) or a suspicious URL. So a pile of generic
-words (`客服 咨询 QQ …`), a lone keyword buried in a 500-char post, or a bare
-link is never a violation on its own; the indicators only push each other.
+keyword (or a per-keyword LR override), an explicit promotion structure (promo
+code / price pitch / enrollment funnel / paid-service pitch / call-to-action /
+pitch+contact cluster), or an offer pattern. A suspicious URL, a lone offer
+pattern, or a lone contact pattern is never a hard signal on its own — only 2+
+co-occurring contact hooks are inherently multi-variable and flag directly. So
+a pile of generic words (`客服 咨询 QQ …`), a lone keyword buried in a 500-char
+post, a bare link, or a single hook (`加V:abc123`) is never a violation on its
+own; the indicators only push each other.
 
 Ads almost always carry a **URL — but to a domain that is neither an official
 site nor a major platform**. URLs on the `safeUrlDomains` whitelist (jd.com,
@@ -244,7 +251,10 @@ of truth. Edit it at runtime, no source changes needed:
   "weakDiminish": 1.5,        // n-th distinct generic hit weighs min(1, 1.5/n)
   "suspiciousUrlLr": 8,       // LR of a URL outside the safe whitelist
   "suspiciousTldLr": 2,       // extra LR when that URL uses a spam-prone TLD (.top/.xyz/.icu…)
-  "minKeywordHits": 2,        // distinct-hit floor before the keyword path runs
+  "contactLr": 4,             // LR of a single contact pattern (soft evidence only)
+  "patternLr": 8,             // LR of an offer pattern (strong evidence, never sole decider)
+  "codeLr": 30, "priceLr": 10, "registerLr": 12, "serviceLr": 8, "ctaLr": 5, "pitchLr": 5.5, // structural features — pitch is weak-on-purpose (售前响应「加我微信 有优惠」≠广告)
+  "minKeywordHits": 2,        // informational only — P is the sole decider (no gate)
   "safeUrlDomains": ["jd.com", "bilibili.com", "gov.cn"],  // official/major platforms: URL adds nothing
   "suspiciousTlds": ["top", "xyz", "icu", "cc"],           // spam-prone TLDs: slightly more doubt
   "questionFactor": 0.55,     // dampener when the message reads as a question (提问语气)

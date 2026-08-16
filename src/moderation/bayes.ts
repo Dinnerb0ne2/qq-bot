@@ -53,9 +53,14 @@
  *    sharing and adds nothing. A non-whitelisted URL contributes
  *    `ln(suspiciousUrlLr)` to the log-odds — and if it also sits on a
  *    spam-prone TLD (`.top`, `.xyz`, `.icu`, …; `suspiciousTlds`) it adds
- *    another `ln(suspiciousTldLr)`, a small extra doubt. Either way a URL only
- *    tips messages that already carry keyword evidence — a lone
- *    recommendation link never flags.
+ *    another `ln(suspiciousTldLr)`, a small extra doubt. A URL is never a
+ *    standalone hard signal (no single variable decides): it only tips
+ *    messages that already carry a strong keyword or a structural offer — a
+ *    lone recommendation link, or a few weak words plus a link, never flags.
+ * 6. Offer patterns (see patterns.ts) are strong structural evidence but, like
+ *    URLs, never decide on their own — a single match needs to co-occur with
+ *    other evidence and clear the threshold. A lone contact pattern is only
+ *    soft evidence; only 2+ co-occurring contact hooks hard-flag directly.
  *
  * All knobs are overridable via config/ad.json at runtime (see settings.ts).
  */
@@ -104,11 +109,16 @@ export interface ModerationBayesParams {
   /** Extra likelihood ratio when such a URL also sits on a spam-prone TLD
    *  (see `suspiciousTlds` in settings.ts) — a small additional doubt. */
   suspiciousTldLr: number
-  /** Soft evidence from a single contact pattern (微信/加V/QQ…) matched inside a
-   *  long message. Short messages and 2+ contact patterns hard-flag via the
-   *  pattern path instead (see detector.ts); a lone pattern in a long post is
-   *  just a hint that a real pitch may be present. */
+  /** Soft evidence from a contact pattern (微信/加V/QQ…) matched in a message.
+   *  A lone contact pattern is never a hard flag on its own (no single variable
+   *  decides); 2+ co-occurring contact patterns are a multi-variable signal and
+   *  hard-flag via the pattern path instead (see detector.ts). */
   contactLr: number
+  /** Likelihood ratio of a matched *offer* pattern (config `patterns` — a
+   *  discount/group-buy/cloud-price pitch). Offer patterns are strong structural
+   *  evidence, but a single one never decides on its own: it must co-occur with
+   *  other evidence and clear the threshold. */
+  patternLr: number
   /** Likelihood ratio of a concrete promo/coupon/invite code (优惠码 AIPRO100).
    *  The hardest structural ad signal — an explicit offer, often the only
    *  proof needed. */
@@ -161,6 +171,7 @@ export const DEFAULT_MODERATION_BAYES: ModerationBayesParams = {
   suspiciousUrlLr: 8,
   suspiciousTldLr: 2,
   contactLr: 4,
+  patternLr: 8,
   codeLr: 30,
   priceLr: 10,
   registerLr: 6,

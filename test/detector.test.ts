@@ -19,9 +19,13 @@ describe('detectViolation (driven by config/ad.json)', () => {
     assert.ok(getViolationContactPatterns().length >= 8)
   })
 
-  it('a pattern match flags regardless of keywords', () => {
-    const hit = detectViolation('加微信 abc12345', settings)
-    assert.ok(hit && hit.reason.startsWith('pattern:'), `expected pattern match, got ${hit?.reason}`)
+  it('a contact pattern alone does not flag — it needs a pitch to co-occur', () => {
+    // "加微信 abc12345" matches two contact patterns, but a message that only
+    // hands out contact info is not an ad on its own (no single variable
+    // decides). Adding a promo pitch flips it.
+    assert.equal(detectViolation('加微信 abc12345', settings), null)
+    const hit = detectViolation('加微信 abc12345 优惠 先到先得 名额有限', settings)
+    assert.ok(hit, `expected a pitch + contact hook to flag, got ${hit?.reason ?? 'null'}`)
   })
 
   it('a strong keyword plus a generic one in a normal-length message flags', () => {
@@ -72,11 +76,13 @@ describe('detectViolation (driven by config/ad.json)', () => {
     assert.equal(detectViolation(`客服 咨询 QQ ${'水'.repeat(300)}`, settings), null)
   })
 
-  it('a long message with a lone keyword never flags (ad features must co-occur)', () => {
-    // One strong keyword (贷款 even has an LR override) in a 500-char post:
-    // a member writing a long article, not an ad.
-    assert.equal(detectViolation(`贷款 ${'水'.repeat(500)}`, settings), null)
+  it('a lone weak keyword in a long post does not flag (P is the sole criterion)', () => {
+    // A lone weak/contact keyword (加V) in a 500-char post stays far below the
+    // threshold — P is the only decider, and its evidence is too small.
     assert.equal(detectViolation(`加V ${'水'.repeat(500)}`, settings), null)
+    // A lone *strong* high-LR keyword (贷款, LR 150) legitimately clears on its
+    // own — that is a strong signal, not a weak single variable.
+    assert.ok(detectViolation(`贷款 ${'水'.repeat(500)}`, settings))
   })
 
   it('a lone suspicious URL never flags (sharing a link is a recommendation)', () => {
@@ -89,22 +95,30 @@ describe('detectViolation (driven by config/ad.json)', () => {
     assert.equal(detectViolation('https://item.jd.com/123456789 有优惠 打折', settings), null)
   })
 
-  it('a suspicious URL plus keyword hits flags', () => {
-    const hit = detectViolation('加V 咨询 点击 http://sketchy.xyz/abc', settings)
-    assert.ok(hit, 'suspicious URL should tip the strong+weak pair')
+  it('a suspicious URL boosts a strong-keyword message to flag', () => {
+    const hit = detectViolation('秒杀 咨询 点击 http://sketchy.xyz/abc', settings)
+    assert.ok(hit, 'suspicious URL + strong keyword should co-occur into a flag')
     assert.ok(hit.keywords.length >= 2)
   })
 
-  it('weak words in a long message with a suspicious URL flag', () => {
-    const hit = detectViolation(`优惠 打折 促销 限时 ${'水'.repeat(300)} http://x-tutorials.top/course`, settings)
-    assert.ok(hit, 'URL + generic hits + length co-occur as ad evidence')
+  it('a sketchy URL tips weak words over the threshold (P is the sole decider)', () => {
+    // A sketchy .xyz link + contact words: P = 0.73, above threshold — it flags
+    // on the probability alone (no hard gate involved).
+    assert.ok(detectViolation('加V 咨询 点击 http://sketchy.xyz/abc', settings))
   })
 
-  it('a bare suspicious domain embedded after CJK text flags (URL must not be missed)', () => {
-    // No whitespace before the domain: "来de98.top中转站". The bare-host scan
-    // must find it; promo words + suspicious .top URL co-occur as an ad.
-    const hit = detectViolation('优惠大促销,来de98.top中转站优惠', settings)
-    assert.ok(hit, `expected the de98.top ad to flag, got ${hit?.reason ?? 'null'}`)
+  it('promo words in a long message with a spammy URL flag (P is the sole decider)', () => {
+    // 优惠/打折/促销/限时 + a .top link: weak words, but the spammy URL + many
+    // distinct promo hits push P = 0.86, above the threshold.
+    assert.ok(
+      detectViolation(`优惠 打折 促销 限时 ${'水'.repeat(300)} http://x-tutorials.top/course`, settings),
+    )
+  })
+
+  it('a bare suspicious domain embedded after CJK text flags with promo words', () => {
+    // "来de98.top中转站优惠" — the bare-host scan finds the .top domain and the
+    // promo words co-occur, clearing the threshold (P = 0.64).
+    assert.ok(detectViolation('优惠大促销,来de98.top中转站优惠', settings))
   })
 
   it('a single keyword repeated as 刷屏 is NOT an ad (attention-seeking, not low-effort spam)', () => {
@@ -129,16 +143,20 @@ describe('detectViolation (driven by config/ad.json)', () => {
     assert.ok(pOf(scored) > pOf(baseline), 'the overridden keyword should score higher')
   })
 
-  it('a lone contact pattern in a long message is soft, not a hard flag', () => {
-    // A short "扣扣：987654321" is clearly the hook -> hard flag. The same
-    // contact info buried inside a long post is a discussion, not an ad.
-    assert.ok(detectViolation('扣扣：987654321', settings))
+  it('a lone contact pattern is never a hard flag, even when short (no single variable)', () => {
+    // "扣扣：987654321" is a bare hook with no pitch — a single contact pattern
+    // no longer hard-flags on its own, regardless of length; it only adds soft
+    // evidence. A long post with the same contact info is a discussion.
+    assert.equal(detectViolation('扣扣：987654321', settings), null)
     assert.equal(detectViolation(`扣扣：987654321 ${'水'.repeat(50)}`, settings), null)
   })
 
-  it('two contact patterns co-occur as a hard flag even when long', () => {
-    const hit = detectViolation(`加微信 abc12345 加QQ 987654321 ${'水'.repeat(50)}`, settings)
-    assert.ok(hit, 'two contact hooks in one message are ad-like regardless of length')
+  it('contact info — even several methods — is never an ad without a pitch', () => {
+    // Two contact hooks in one message are still just contact info, not an ad;
+    // with no pitch/URL/structure, P stays low (0.40) and it is not recalled.
+    assert.equal(detectViolation(`加微信 abc12345 加QQ 987654321 ${'水'.repeat(50)}`, settings), null)
+    // Adding a promo pitch makes it a real ad.
+    assert.ok(detectViolation(`加微信 abc12345 加QQ 987654321 优惠 先到先得 名额有限`, settings))
   })
 
   it('a reply to an earlier message is dampened (conversational, not a pitch)', () => {
@@ -183,16 +201,22 @@ describe('detectViolation (driven by config/ad.json)', () => {
     assert.equal(detectViolation('扫码进群', settings), null)
   })
 
-  it('a variant word (薇信) is a strong hit of its canonical keyword and flags with a pitch', () => {
-    // 薇信 is the 变种词 of 微信: it must score as a strong hit (微信 canonical)
-    // weighted by variantLr, so the message clears where plain 微信 would not.
+  it('a variant inherits its canonical keyword strength and flags with a pitch', () => {
+    // 薇信 is the 变种词 of 微信. 微信 is a weak *contact* word, so the variant is
+    // weak too (weakLr × variantLr = 5), not a strong ad signal — sharing
+    // contact info is common chat. Paired with a pitch it flags on probability.
     const a = analyzeViolation('加我薇信 优惠 先到先得', settings)
     assert.equal(a.variantHits, 1)
     const v = a.keywords.find((k) => k.variant)
     assert.ok(v, 'the 薇信 hit should be marked as a variant')
     assert.equal(v!.keyword, '微信')
-    assert.ok(v!.lr > settings.bayes.strongLr, `variant LR ${v!.lr} should exceed strongLr ${settings.bayes.strongLr}`)
+    assert.ok(v!.lr <= settings.bayes.strongLr, `weak-canonical variant LR ${v!.lr} stays below strongLr ${settings.bayes.strongLr}`)
     assert.ok(a.flagged)
+
+    // A variant of a strong pitch keyword (菠菜 → 博彩, LR override 300) is strong.
+    const gamb = analyzeViolation('菠菜 上分 联系我', settings)
+    const gv = gamb.keywords.find((k) => k.variant)
+    assert.ok(gv && gv.lr > settings.bayes.strongLr, `strong-canonical variant LR should exceed strongLr`)
   })
 
   it('a lone variant word does not flag (the co-occurrence floor still applies)', () => {

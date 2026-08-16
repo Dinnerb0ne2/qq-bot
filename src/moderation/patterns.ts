@@ -11,14 +11,15 @@
  * There are two pattern families:
  *
  * - `BUILTIN_VIOLATION_PATTERNS` (config `patterns`) — *offer* structures (a concrete
- *   discount, a group-buy push, a cloud-server price). A single match hard-flags
- *   the message regardless of length or keywords: these are the pitch itself.
+ *   discount, a group-buy push, a cloud-server price). These are strong structural
+ *   evidence, but a single one never decides on its own (no single variable
+ *   decides): it must co-occur with other evidence and clear the probability
+ *   threshold (see detector.ts).
  * - `BUILTIN_CONTACT_VIOLATION_PATTERNS` (config `contactPatterns`) — *contact* /
- *   hook patterns (加微信:xxx, QQ号, 电话, 扫码领…). These only hard-flag when
- *   the message is short (too little text to be anything but the hook) or two
- *   or more of them co-occur; a lone one inside a long message adds weak
- *   evidence instead (see detector.ts), because a long post mentioning a WeChat
- *   id is usually a discussion, not an ad.
+ *   hook patterns (加微信:xxx, QQ号, 电话, 扫码领…). A single one is never a hard
+ *   flag — even in a short message it only adds soft evidence (see detector.ts).
+ *   Only 2+ co-occurring contact patterns (several hooks in one message) are
+ *   inherently multi-variable and hard-flag.
  *
  * SECURITY: patterns run against every message and Node's RegExp has no
  * timeout, so a catastrophically-backtracking pattern (ReDoS) would hang the
@@ -36,7 +37,8 @@ export interface ParseResult<T> {
   skipped: string[]
 }
 
-/** High-signal *offer* patterns — a single match flags the message as an ad. */
+/** High-signal *offer* patterns — strong structural evidence, but a single one
+ *  never decides on its own (must co-occur and clear the threshold). */
 export const BUILTIN_VIOLATION_PATTERNS: readonly RegExp[] = [
   /[0-9一二三四五六七八九十百]+[%％].*?折扣/,
   /还差\d{1,2}人.{0,10}(拼团|团购|满减)/,
@@ -47,7 +49,8 @@ export const BUILTIN_VIOLATION_PATTERNS: readonly RegExp[] = [
   /(阿里云|腾讯云|京东云|华为云|百度云|天翼云|优刻得|轻量应用服务器|云服务器).{0,14}?\d+\s*元\s*\/\s*\d+\s*[年月]/,
 ]
 
-/** Contact/hook patterns — length-gated (see module doc + detector.ts). */
+/** Contact/hook patterns — a single one is only soft evidence (no single
+ *  variable decides); only 2+ co-occurring hooks hard-flag. */
 export const BUILTIN_CONTACT_VIOLATION_PATTERNS: readonly RegExp[] = [
   /加[V微]信?[:：]?\s*([a-zA-Z0-9_-]{4,20})/,
   /微信[号码]?[:：]?\s*([a-zA-Z0-9_-]{4,20})/,
@@ -58,6 +61,8 @@ export const BUILTIN_CONTACT_VIOLATION_PATTERNS: readonly RegExp[] = [
   /[找要]人.{0,5}一起.{0,5}(考研|调剂|保研)/,
   /本人.{0,20}(专业|精通).{0,20}(辅导|指导)/,
   /(免费|赠送|折扣).{0,15}(咨询|了解|获取)/,
+  /威?信[：:]?\s*\d{11}/,
+  /加.{0,5}扣.{0,5}\d{5,}/,
 ]
 
 /** Reject patterns longer than this (junk / accidental paste guard). */

@@ -10,9 +10,12 @@
 #             almost never benign — each hit is strong evidence, so a strong hit
 #             plus any other keyword typically flags.
 # [patterns]  one regex per line — a bare source, or the /source/flags form.
-#             A single match flags a message. Patterns are validated at load:
-#             invalid, over-long, or catastrophically-slow ones are skipped and
-#             the stateful g/y flags are dropped.
+#             Matches are strong structural evidence, but a single one never
+#             decides on its own — no single variable flags a message; it must
+#             co-occur with other evidence and clear the probability threshold.
+#             Patterns are validated at load: invalid, over-long, or
+#             catastrophically-slow ones are skipped and the stateful g/y flags
+#             are dropped.
 #             WARNING: patterns run on every message with no timeout. Avoid
 #             nested quantifiers like (a+)+ which can hang the bot (ReDoS).
 # [variants]  variant words (变种词): one line per canonical keyword, mapping
